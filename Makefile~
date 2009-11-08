@@ -1,16 +1,19 @@
 OPTS = -O2 -Wall
 OBJS = kttcp.o mytcplib.o mulio.o 
 
-target:skipgraph
+target:searchtest
 
-skipgraph:skipgraph.o mytcplib.o mulio.o node.o
-	g++ skipgraph.o mytcplib.o mulio.o node.o -o skipgraph -pthread -lrt
+searchtest:searchtest.o skipgraph.o mytcplib.o mulio.o
+	g++ searchtest.o mytcplib.o mulio.o -o searchtest -pthread -lrt
 
-skipgraph.o:skipgraph.cpp
+searchtest.o:searchtest.cpp
+	g++ searchtest.cpp -o searchtest.o -c $(OPTS)
+
+skipgraph:skipgraph.o mytcplib.o mulio.o
+	g++ skipgraph.o mytcplib.o mulio.o -o skipgraph -pthread -lrt
+
+skipgraph.o:skipgraph.cpp skipgraph.h
 	g++ skipgraph.cpp -o skipgraph.o -c $(OPTS)
-
-node.o:node.cpp
-	g++ node.cpp -o node.o -c $(OPTS)
 
 kttcp:$(OBJS)
 	g++ $(OBJS) -o kttcp -pthread -lrt
@@ -18,7 +21,7 @@ kttcp:$(OBJS)
 kttcp.o:kttcp.cpp mulio.h
 	g++ kttcp.cpp -o kttcp.o -c $(OPTS)
 
-mytcplib.o: mytcplib.cpp
+mytcplib.o: mytcplib.cpp mytcplib.h
 	g++ mytcplib.cpp -o mytcplib.o -c $(OPTS)
 
 mulio.o:mulio.cpp mulio.h

@@ -33,20 +33,13 @@ int mulio::fds_set_all(fd_set* fds){
 	return max;
 }
 void mulio::SetCallback(int (*cb)(int)){
-	callback = cb;
-}
+		callback = cb;
+	}
 void mulio::SetAcceptSocket(int socket){
 	mAcceptSocket = socket;
 	if( socket > mMaxFd ){
 		mMaxFd = socket;
 	}
-}
-void mulio::SetSocket(int socket){
-	mAddSocket.push_back(socket);
-	if( socket > mMaxFd ){
-		mMaxFd = socket;
-	}
-	write(awaker[1],"",1);
 }
 void mulio::worker(void){
 	fd_set fds_clone;

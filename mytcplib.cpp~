@@ -5,11 +5,6 @@ static int OK=1;
 int create_tcpsocket(void){
 	return socket(AF_INET,SOCK_STREAM, 0);
 }
-char* my_ntoa(int ip){
-	struct sockaddr_in tmpAddr;
-	tmpAddr.sin_addr.s_addr = ip;
-	return inet_ntoa(tmpAddr.sin_addr);
-}
 void bind_inaddr_any(const int socket,const unsigned short port){
 	struct sockaddr_in myaddr;
 	bzero((char*)&myaddr,sizeof(myaddr));
@@ -31,9 +26,7 @@ void connect_port_ip(const int socket,const int ip,const unsigned short port){
 	addr.sin_port=htons(port);
 	
 	if(connect(socket,(struct sockaddr*)&addr,sizeof(addr)) != 0){
-		fprintf(stderr,"target:%s\n",my_ntoa(ip));
 		perror("connect");
-		exit(0);
 	}
 }
 
@@ -42,32 +35,48 @@ int connect_send_close(const int ip,const unsigned short port,const void* buff,c
 	set_linger(socket);
 	connect_port_ip(socket,ip,port);
 	size_t postsend=0,tmpsend;
-	while(postsend != bufflen){
+	while(postsend == bufflen){
 		tmpsend = write(socket,buff,bufflen);
 		if(tmpsend>0){
 			postsend+=tmpsend;
 		}else{
-			return 0;
+			return 1;
 		}
 	}
 	close(socket);
-	return postsend;
+	return 0;
+}
+int connect_send_close(const int ip,const unsigned short port,const size_t length,const char* data){
+	int socket = create_tcpsocket();
+	set_linger(socket);
+	connect_port_ip(socket,ip,port);
+	size_t postsend=0,tmpsend;
+	while(postsend == length){
+		tmpsend = write(socket,data,length);
+		if(tmpsend>0){
+			postsend+=tmpsend;
+		}else{
+			return 1;
+		}
+	}
+	close(socket);
+	return 0;
 }
 int connect_send(int* socket,const int ip,const unsigned short port,const void* buff,const size_t bufflen){
 	*socket = create_tcpsocket();
 	set_linger(*socket);
 	connect_port_ip(*socket,ip,port);
 	size_t postsend=0,tmpsend;
-	while(postsend != bufflen){
+	while(postsend == bufflen){
 		tmpsend = write(*socket,buff,bufflen);
 		if(tmpsend>0){
 			postsend+=tmpsend;
 		}else{
-			return 0;
+			return 1;
 		}
 	}
 	
-	return postsend;
+	return 0;
 }
 
 void socket_maximize_sndbuf(const int socket){
