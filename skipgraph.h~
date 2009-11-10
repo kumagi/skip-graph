@@ -1,4 +1,4 @@
-#define MAXLEVEL 32
+#define MAXLEVEL 3
 #include "mytcplib.h"
 #include<vector>
 #include<set>
@@ -34,11 +34,15 @@ public:
 		if(mSocket != 0){
 			return write(mSocket,buff,bufflen);
 		}else{
-			return connect_send(&mSocket,mAddress.ip,mAddress.port,buff,bufflen);
+			if(mFlagValid){
+				return connect_send(&mSocket,mAddress.ip,mAddress.port,buff,bufflen);
+			}else{
+				return 0;
+			}
 		}
 		return 0;
 	}
-	void set(int socket,KeyType key,int ip,long long id,unsigned short port){
+	void set(int socket,KeyType& key,int ip,long long id,unsigned short port){
 		mKey = key;
 		mId = id;
 		mSocket = socket;
@@ -48,7 +52,6 @@ public:
 		mFlagValid = 1;
 	}
 };
-
 
 long long gId = 0;
 template<typename KeyType, typename ValueType>
@@ -62,7 +65,8 @@ public:
 	std::vector<sg_neighbor<KeyType> > mRight;
 	std::vector<sg_neighbor<KeyType> > mLeft;
 	sg_node(){
-		mMaxLevel = 8;
+		mId = gId;
+		mMaxLevel = MAXLEVEL;
 		mPointer.mId = gId;
 		mPointer.mAddress.ip = settings.myip;
 		mPointer.mAddress.port = settings.useport;
@@ -71,9 +75,10 @@ public:
 		mLeft.reserve(mMaxLevel);
 	}
 	sg_node(KeyType& k,ValueType& v){
-		mMaxLevel = 8;
+		mMaxLevel = 32;
 		mKey = k;
 		mValue = v;
+		mId = gId;
 		mPointer.mKey = k;
 		mPointer.mId = gId;
 		mPointer.mAddress.ip = settings.myip;
@@ -265,7 +270,7 @@ public:
 	int compare(class membership_vector mv){
 		int count = 0;
 		long long diff = mVector^mv.mVector;
-		while(!(diff&1)){
+		while(!(diff&1) && count!=MAXLEVEL-1){
 			count++;
 			diff >>= 1;
 		}
@@ -274,7 +279,7 @@ public:
 	int compare(long long mv){
 		int count = 0;
 		long long diff = mVector^mv;
-		while(!(diff&1)){
+		while(!(diff&1) && count!=MAXLEVEL-1){
 			count++;
 			diff >>= 1;
 		}

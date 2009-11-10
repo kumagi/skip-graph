@@ -4,6 +4,7 @@
 #include <semaphore.h>
 
 #include <list>
+#include <set>
 #include <vector>
 #include <deque>
 
@@ -16,7 +17,7 @@
 class mulio{
 private:
 	// socket list
-	std::list<int>mSocketList;
+	std::set<int>mSocketList;
 	std::deque<int>mActiveSocket;
 	std::vector<int>mDeleteSocket;
 	std::vector<int>mAddSocket;
@@ -33,9 +34,10 @@ private:
 	int calcMaxFd(void);
 	int fds_set_all(fd_set* fds);
 public:
+	void printSocketList(void);
 	void SetCallback(int (*cb)(int));
-	void SetAcceptSocket(int socket);
-	void SetSocket(int socket);
+	void SetAcceptSocket(const int socket);
+	void SetSocket(const int socket);
 	void worker(void);
 	void eventloop(void);
 	void run(void);

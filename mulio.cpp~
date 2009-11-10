@@ -22,6 +22,8 @@ int mulio::fds_set_all(fd_set* fds){
 	FD_SET(mAcceptSocket,fds);
 	FD_SET(awaker[0],fds);
 	mSocketList.sort();
+	
+	
 	std::list<int>::iterator it = mSocketList.begin();
 	while( it != mSocketList.end() ){
 		FD_SET( *it, fds );
@@ -33,13 +35,20 @@ int mulio::fds_set_all(fd_set* fds){
 	return max;
 }
 void mulio::SetCallback(int (*cb)(int)){
-		callback = cb;
-	}
-void mulio::SetAcceptSocket(int socket){
+	callback = cb;
+}
+void mulio::SetAcceptSocket(const int socket){
 	mAcceptSocket = socket;
 	if( socket > mMaxFd ){
 		mMaxFd = socket;
 	}
+}
+void mulio::SetSocket(const int socket){
+	mAddSocket.push_back(socket);
+	if( socket > mMaxFd ){
+		mMaxFd = socket;
+	}
+	write(awaker[1],"",1);
 }
 void mulio::worker(void){
 	fd_set fds_clone;
@@ -54,7 +63,7 @@ void mulio::worker(void){
 				
 			// delete by DeleteList
 			for(unsigned int i=0; i < mDeleteSocket.size(); i++){
-				FD_CLR(mDeleteSocket[i],&fds_clone);
+				FD_CLR(mDeleteSocket[i],&fds);
 				mSocketList.remove(mDeleteSocket[i]);
 				if( mDeleteSocket[i] == mMaxFd ){
 					mMaxFd = calcMaxFd();
@@ -63,10 +72,13 @@ void mulio::worker(void){
 			mDeleteSocket.clear();
 			// add by AddList
 			for(unsigned int i=0; i < mAddSocket.size(); i++){
-				FD_SET(mAddSocket[i],&fds_clone);
+				FD_SET(mAddSocket[i],&fds);
 				mSocketList.push_back(mAddSocket[i]);
 				if( mAddSocket[i] > mMaxFd ){
 					mMaxFd = mAddSocket[i];
+				}
+				if(mAddSocket[i] == 1){
+					printf("caution!! one !!\n");
 				}
 			}
 			mAddSocket.clear();

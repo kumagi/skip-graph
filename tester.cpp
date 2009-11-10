@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <pthread.h>
 
 #include <iostream>
@@ -68,6 +69,14 @@ enum Left_Right{
 	Right,
 };
 
+void print_nodelist(void){
+	std::list<sg_Node*>::iterator it = NodeList.begin();
+	while(it != NodeList.end() ){
+		//if((*it)->mId != (*it)->pPointer.mId){printf("not sanity\n");}
+		printf("%lld: key=%d  value=%d  left=%d right=%d\n",(*it)->mId,(*it)->mKey.mKey,(*it)->mValue.mValue,(*it)->mLeft[0].mKey.mKey,(*it)->mRight[0].mKey.mKey);
+		++it;
+	}
+}
 //Receive the key
 int receive_key(int socket,size_t* keylength,char** key){
 	size_t postread = 0,tmplen;
@@ -83,6 +92,27 @@ int receive_key(int socket,size_t* keylength,char** key){
 	*key[*keylength+1] = '\0';
 	return 0;
 }
+int send_with_connect(sg_neighbor<intkey>& ptr,char* buff,int bufflen){
+	int sendsize;
+	if(ptr.mSocket != 0){
+		sendsize = write(ptr.mSocket,buff,bufflen);
+		if(sendsize<=0){
+			fprintf(stderr,"send_with_connect:error\n");
+		}
+	}else{
+		if(ptr.mFlagValid){
+			sendsize = connect_send(&ptr.mSocket,ptr.mAddress.ip,ptr.mAddress.port,buff,bufflen);
+			ptr.mFlagValid = 1;
+			mulio.SetSocket(ptr.mSocket);
+			return sendsize;
+		}else{
+			return 0;
+		}
+	}
+	return 0;
+}	
+
+
 int main_thread(int s){
 	int socket = s,tmpsocket;
 	char op;
@@ -99,13 +129,16 @@ int main_thread(int s){
 	intvalue tmpvalue;
 	
 	if(settings.verbose>1)
-		fprintf(stderr,"socket:%d  ",socket);
+		fprintf(stderr,"\nsocket:%d ",socket);
 	
 	int EndFlag = 0,DeleteFlag = 0;
 	while(EndFlag == 0){
 		chklen = read(socket,&op,1);
 		if(chklen <= 0){
+			fprintf(stderr," close\n");
+			close(socket);
 			EndFlag = 1;
+			DeleteFlag = 1;
 			break;
 		}
 		switch(op){
@@ -119,7 +152,7 @@ int main_thread(int s){
 			read(socket,&targetlevel,4);
 			read(socket,&targetip,4);
 			read(socket,&targetport,2); 
-			printf("received searchkey:%d\n",tmpkey.mKey);
+			fprintf(stderr,"received searchkey:%d\n",tmpkey.mKey);
 			
 			if(tmpkey == tmpnode->mKey){
 				//send FoundOP
@@ -181,9 +214,9 @@ int main_thread(int s){
 					assert(bufflen == buffindex && "buffsize ok");
 					
 					if(left_or_right == Right){
-						tmpnode->mRight[targetlevel].send(buff,bufflen);
+						send_with_connect(tmpnode->mRight[targetlevel],buff,bufflen);
 					}else{
-						tmpnode->mLeft[targetlevel].send(buff,bufflen);
+						send_with_connect(tmpnode->mLeft[targetlevel],buff,bufflen);
 					}
 					free(buff);
 				}else{
@@ -202,7 +235,6 @@ int main_thread(int s){
 					
 					//send and cleanup
 					connect_send_close(targetip,targetport,buff,bufflen);
-					
 					free(buff);
 				}
 			}
@@ -210,7 +242,7 @@ int main_thread(int s){
 			break;
 		case LinkOp://id,key,originip,originid,originport,level,LorR
 			if(settings.verbose>1)
-				fprintf(stderr,"LinkOP  ");
+				fprintf(stderr,"LinkOP ");
 			
 			read(socket,&targetid,8);
 			tmpnode = search_node_by_id(targetid);
@@ -226,13 +258,12 @@ int main_thread(int s){
 			}else{
 				tmpnode->mRight[targetlevel].set(socket,tmpkey,originip,originid,originport);
 			}
-			printf("target:%d from:%d   targetlevel:%d",tmpnode->mKey.mKey,tmpkey.mKey,targetlevel);
+			fprintf(stderr,"target:%d from:%d   targetlevel:%d",tmpnode->mKey.mKey,tmpkey.mKey,targetlevel);
 			if(left_or_right == Left){
-				printf("  in left side\n");
+				fprintf(stderr,"  in left side\n");
 			}else{
-				printf("  in right side\n");
+				fprintf(stderr,"  in right side\n");
 			}
-			
 			mulio.SetSocket(socket);
 			EndFlag = 1;
 			break;
@@ -240,12 +271,14 @@ int main_thread(int s){
 			tmpkey.Receive(socket);
 			tmpvalue.Receive(socket);
 			fprintf(stderr,"key:%d found!  value:%d\n",tmpkey.mKey,tmpvalue.mValue);
+			EndFlag = 1;
 			break;
 		case NotfoundOp:
 			tmpkey.Receive(socket);
 			fprintf(stderr,"key:%d not found ! ",tmpkey.mKey);
 			tmpkey.Receive(socket);
 			fprintf(stderr,"nearest key:%d\n",tmpkey.mKey);
+			EndFlag = 1;
 			break;
 		case SetOp:
 			if(settings.verbose>1)
@@ -275,10 +308,15 @@ int main_thread(int s){
 			serialize_longlong(buff,&buffindex,myVector.mVector);
 			
 			assert(bufflen == buffindex && "buffsize ok");
-			connect_send_close(settings.targetip,settings.useport,buff,buffindex);
+			connect_send_close(settings.targetip,settings.useport,buff,buffindex);//TreatOp
 			free(buff);
-			printf("key:%d ,value:%d set in ID:%lld\n",tmpkey.mKey,tmpvalue.mValue,tmpnode->mId);
-			
+			fprintf(stderr,"key:%d ,value:%d set in ID:%lld\n",tmpkey.mKey,tmpvalue.mValue,tmpnode->mId);
+			print_nodelist();
+			fprintf(stderr,"end of SetOP\n");
+			/*
+			EndFlag = 1;
+			DeleteFlag = 1;
+			*/
 			break;
 		case TreatOp://targetid,key,originip,originid,originport
 			// if you are nearest to origin, connect origin in level 0
@@ -307,10 +345,9 @@ int main_thread(int s){
 				buffindex+=tmpnode->mKey.Serialize(&buff[buffindex]);
 				buffindex+=tmpnode->mValue.Serialize(&buff[buffindex]);
 				
-				connect_send_close(targetip,targetport,buff,bufflen);
+				connect_send_close(originip,originport,buff,bufflen);
 				free(buff);
 			}else{
-				fprintf(stderr,"ID:%lld\n",tmpnode->mId);
 				tmplevel = MAXLEVEL-1;
 				if(tmpkey > tmpnode->mKey){
 					//send TreatOP to Rightside
@@ -341,60 +378,53 @@ int main_thread(int s){
 					if(settings.verbose>1)
 						fprintf(stderr,"send TreatOP level:%d\n",tmplevel);
 					
+					
 					buffindex = 0;
 					bufflen = 1+8+tmpkey.size()+4+8+2+8;//[OP id key level ip id port]
 					buff = (char*)malloc(bufflen);
 					buff[buffindex++] = TreatOp;
 					if(left_or_right == Right){
-						serialize_longlong(buff,&buffindex,tmpnode->mRight[targetlevel].mId);
+						serialize_longlong(buff,&buffindex,tmpnode->mRight[tmplevel].mId);
 					}else{
-						serialize_longlong(buff,&buffindex,tmpnode->mLeft[targetlevel].mId);
+						serialize_longlong(buff,&buffindex,tmpnode->mLeft[tmplevel].mId);
 					}
 					buffindex+=tmpkey.Serialize(&buff[buffindex]);
 					serialize_int(buff,&buffindex,originip);
 					serialize_longlong(buff,&buffindex,originid);
 					serialize_short(buff,&buffindex,originport);
-					serialize_longlong(buff,&buffindex,myVector.mVector);
-					
+					serialize_longlong(buff,&buffindex,originvector);
 					assert(bufflen == buffindex && "buffsize ok");
 					
 					if(left_or_right == Right){
-						tmpnode->mRight[tmplevel].send(buff,bufflen);
+						send_with_connect(tmpnode->mRight[tmplevel],buff,bufflen);
 					}else{
-						tmpnode->mLeft[tmplevel].send(buff,bufflen);
+						send_with_connect(tmpnode->mLeft[tmplevel],buff,bufflen);
 					}
 					free(buff);
+					EndFlag = 1;
 				}else{
 					//send LinkOP
 					if(settings.verbose>1)
-						fprintf(stderr,"send LinkOP from %d\n",tmpnode->mKey.mKey);
-					//prepare
-					targetlevel = 0;
-					buffindex = 0; 
-					bufflen = 1+8+tmpkey.size()+4+8+2+4+1;
-					buff = (char*)malloc(bufflen);
-					//serialize
-					buff[buffindex++] = LinkOp;
-					serialize_longlong(buff,&buffindex,originid);
-					buffindex += tmpnode->mKey.Serialize(&buff[buffindex]);
-					serialize_int(buff,&buffindex,settings.myip);
-					serialize_longlong(buff,&buffindex,tmpnode->mId);
-					serialize_short(buff,&buffindex,settings.useport);
-					serialize_int(buff,&buffindex,targetlevel);
-					buff[buffindex++] = 1-left_or_right;
-					connect_send(&tmpsocket,originip,originport,buff,bufflen);
-					mulio.SetSocket(tmpsocket);
-					free(buff);
+						fprintf(stderr,"treated by ID:%lld key:%d\n",tmpnode->mId,tmpnode->mKey.mKey);
 					
-					//prepare
-					fprintf(stderr,"oppsiteside %d introduce \n",tmpnode->mRight[0].mKey.mKey);
+					//opposite
+					if(settings.verbose>1){
+						if(left_or_right == Left){
+							fprintf(stderr,"send introduceOp from %d to %d\n",tmpnode->mKey.mKey,tmpnode->mLeft[0].mKey.mKey);
+						}else{
+							fprintf(stderr,"send introduceOp from %d to %d\n",tmpnode->mKey.mKey,tmpnode->mRight[0].mKey.mKey);
+						}
+					}
 					targetlevel = 0;
 					buffindex = 0;
 					bufflen = 1+8+tmpkey.size()+4+8+2+4+8;
 					buff = (char*)malloc(bufflen);
-					//serialize
 					buff[buffindex++] = IntroduceOp;
-					serialize_longlong(buff,&buffindex,originid);
+					if(left_or_right == Left){
+						serialize_longlong(buff,&buffindex,tmpnode->mLeft[0].mId);
+					}else{
+						serialize_longlong(buff,&buffindex,tmpnode->mRight[0].mId);
+					}
 					buffindex += tmpkey.Serialize(&buff[buffindex]);
 					serialize_int(buff,&buffindex,originip);
 					serialize_longlong(buff,&buffindex,originid);
@@ -403,16 +433,37 @@ int main_thread(int s){
 					serialize_longlong(buff,&buffindex,originvector);
 					assert(bufflen == buffindex);
 					if(left_or_right == Left){
-						tmpnode->mLeft[0].send(buff,bufflen);
+						connect_send_close(tmpnode->mLeft[0].mAddress.ip,tmpnode->mLeft[0].mAddress.port,buff,bufflen);
 					}else{
-						//printf("oppsite: %s\n",my_ntoa(tmpnode->mRight[0].mAddress.ip));
-						tmpnode->mRight[0].send(buff,bufflen);
+						connect_send_close(tmpnode->mRight[0].mAddress.ip,tmpnode->mRight[0].mAddress.port,buff,bufflen);
 					}
 					free(buff);
 					
+					//LinkOp to new node
+					targetlevel = 0;
+					buffindex = 0; 
+					bufflen = 1+8+tmpkey.size()+4+8+2+4+1;
+					buff = (char*)malloc(bufflen);
+					buff[buffindex++] = LinkOp;
+					serialize_longlong(buff,&buffindex,originid);
+					buffindex += tmpnode->mKey.Serialize(&buff[buffindex]);
+					serialize_int(buff,&buffindex,settings.myip);
+					serialize_longlong(buff,&buffindex,tmpnode->mId);
+					serialize_short(buff,&buffindex,settings.useport);
+					serialize_int(buff,&buffindex,targetlevel);
+					buff[buffindex++] = left_or_right == Left ? Right : Left ;
+					connect_send(&tmpsocket,originip,originport,buff,bufflen);
+					mulio.SetSocket(tmpsocket);
+					free(buff);
+					if(left_or_right == Left){
+						tmpnode->mLeft[0].set(tmpsocket,tmpkey,originip,originid,originport);
+					}else{
+						tmpnode->mRight[0].set(tmpsocket,tmpkey,originip,originid,originport);
+					}
+					
 					//search level
 					targetlevel = myVector.compare(originvector);
-						
+					
 					bufflen = 1+8+tmpkey.size()+4+8+2+4+1;
 					buff = (char*)malloc(bufflen);
 					//prepare
@@ -424,7 +475,7 @@ int main_thread(int s){
 					serialize_int(buff,&buffindex,settings.myip);
 					serialize_longlong(buff,&buffindex,tmpnode->mId);
 					serialize_short(buff,&buffindex,settings.useport);
-					for(int i=0;i<=targetlevel;i++){
+					for(int i=1;i<=targetlevel;i++){
 						serialize_int(buff,&buffindex,i);
 						buff[buffindex++] = left_or_right == Left ? Right : Left;
 						connect_send(&tmpsocket,originip,originport,buff,buffindex);
@@ -436,31 +487,37 @@ int main_thread(int s){
 						}else{
 							tmpnode->mRight[i].set(tmpsocket,tmpkey,originip,originid,originport);
 						}
+						printf("Link from %d to %d at level %d\n",tmpnode->mKey.mKey,tmpkey.mKey,i);
+						
 					}
 					free(buff);
 					
-					buffindex = 0;
-					bufflen = 1+8+tmpkey.size()+4+8+2+4+8;
-					buff = (char*)malloc(bufflen);
-					//serialize
-					buff[buffindex++] = IntroduceOp;
-					serialize_longlong(buff,&buffindex,originid);
-					buffindex += tmpkey.Serialize(&buff[buffindex]);
-					serialize_int(buff,&buffindex,originip);
-					serialize_longlong(buff,&buffindex,originid);
-					serialize_short(buff,&buffindex,originport);
-					serialize_int(buff,&buffindex,targetlevel);
-					serialize_longlong(buff,&buffindex,originvector);
-					if(left_or_right == Left){
-						tmpnode->mRight[targetlevel].send(buff,bufflen);
-					}else{
-						tmpnode->mLeft[targetlevel].send(buff,bufflen);
+					targetlevel++;
+					if(targetlevel < MAXLEVEL){
+						buffindex = 0;
+						bufflen = 1+8+tmpkey.size()+4+8+2+4+8;
+						buff = (char*)malloc(bufflen);
+						//serialize
+						buff[buffindex++] = IntroduceOp;
+						serialize_longlong(buff,&buffindex,originid);
+						buffindex += tmpkey.Serialize(&buff[buffindex]);
+						serialize_int(buff,&buffindex,originip);
+						serialize_longlong(buff,&buffindex,originid);
+						serialize_short(buff,&buffindex,originport);
+						serialize_int(buff,&buffindex,targetlevel);
+						serialize_longlong(buff,&buffindex,originvector);
+						
+						if(left_or_right == Left){
+							send_with_connect(tmpnode->mRight[targetlevel],buff,bufflen);
+						}else{
+							send_with_connect(tmpnode->mLeft[targetlevel],buff,bufflen);
+						}
+						free(buff);
 					}
-					free(buff);  
-					if(settings.verbose>1)
-						fprintf(stderr,"end of TreatOP\n");
 				}
 			}
+			if(settings.verbose>1)
+				fprintf(stderr,"end of TreatOP\n");
 			EndFlag = 1;
 			break;
 		case IntroduceOp:
@@ -513,39 +570,41 @@ int main_thread(int s){
 			}
 			free(buff);
 			if(tmplevel < MAXLEVEL-1){
-					buffindex = 0;
-					bufflen = 1+8+tmpkey.size()+4+8+2+4+8;
-					buff = (char*)malloc(bufflen);
-					//serialize
-					buff[buffindex++] = IntroduceOp;
-					serialize_longlong(buff,&buffindex,originid);
-					buffindex += tmpkey.Serialize(&buff[buffindex]);
-					serialize_int(buff,&buffindex,originip);
-					serialize_longlong(buff,&buffindex,originid);
-					serialize_short(buff,&buffindex,originport);
-					serialize_int(buff,&buffindex,tmplevel);
-					serialize_longlong(buff,&buffindex,originvector);
-					if(left_or_right == Left){
-						tmpnode->mRight[targetlevel].send(buff,bufflen);
-					}else{
-						tmpnode->mLeft[targetlevel].send(buff,bufflen);
-					}
-					free(buff);
+				buffindex = 0;
+				bufflen = 1+8+tmpkey.size()+4+8+2+4+8;
+				buff = (char*)malloc(bufflen);
+				//serialize
+				buff[buffindex++] = IntroduceOp;
+				serialize_longlong(buff,&buffindex,originid);
+				buffindex += tmpkey.Serialize(&buff[buffindex]);
+				serialize_int(buff,&buffindex,originip);
+				serialize_longlong(buff,&buffindex,originid);
+				serialize_short(buff,&buffindex,originport);
+				serialize_int(buff,&buffindex,tmplevel);
+				serialize_longlong(buff,&buffindex,originvector);
+				if(left_or_right == Left){
+					send_with_connect(tmpnode->mRight[targetlevel],buff,bufflen);
+				}else{
+					send_with_connect(tmpnode->mLeft[targetlevel],buff,bufflen);
+				}
+				free(buff);
 			}
+			fprintf(stderr,"end of Introduce Op\n");
 			EndFlag = 1;
 			break;
 		default:
-			printf("error: undefined operation %d.\n",op);
+			fprintf(stderr,"error: undefined operation %d.\n",op);
 		}
 	}
 	/*
-	if(settings.verbose>1)
-		printf("socket:%d end\n",socket);
-	*/
+	  if(settings.verbose>1)
+	  fprintf(stderr,"socket:%d end\n",socket);
+	//*/
 	return DeleteFlag;
 }
+
 void* worker(void* arg){
-	mulio.run();// accept thread
+	mulio.eventloop();// accept thread
 	return NULL;
 }
 
@@ -603,15 +662,16 @@ int main(int argc,char** argv){
 			maxnode.mLeft[i] = minnode.mPointer;
 		}
 		/*
-		for(int i=0;i<MAXLEVEL;i++){
-			printf("%d:mLeft = %d  valid:%d\n",i,minnode.mLeft[i].mKey.mKey,minnode.mLeft[i].mFlagValid);
-		}
+		  for(int i=0;i<MAXLEVEL;i++){
+		  printf("%d:mLeft = %d  valid:%d\n",i,minnode.mLeft[i].mKey.mKey,minnode.mLeft[i].mFlagValid);
+		  }
 		*/
 		
 		NodeList.push_back(&minnode);
 		NodeList.push_back(&maxnode);
 		
 		fprintf(stderr,"min:ID%lld  max:ID%lld\n",minnode.mId,maxnode.mId);
+		fprintf(stderr,"ValidFlag:%d \n",maxnode.mKey.mValidFlag);
 	}
 	// set accepting thread
 	int listening = create_tcpsocket();
@@ -629,7 +689,56 @@ int main(int argc,char** argv){
 	if(settings.verbose>1){
 		std::cerr << "start warking as skipgraph server..." << std::endl;
 	}
+	char command[30];
 	
+	intkey key;
+	key.mValidFlag = 1;
+	intvalue value;
+	char* buff;
+	int bufflen,buffindex,tmptargetlevel=MAXLEVEL-1;
+	long long tmpid=0;
+	//char left_or_right = Right;
+	while(1){
+		printf("command> ");
+		scanf("%s ",command);
+		if(strncmp("set",command,3)==0){
+			scanf("%d %d",&key.mKey,&value.mValue);
+			bufflen = 1 + key.size() + value.size();
+			buffindex = 0;
+			buff = (char*)malloc(bufflen);
+			buff[buffindex++] = SetOp;
+			buffindex += key.Serialize(&buff[buffindex]);
+			buffindex += value.Serialize(&buff[buffindex]);
+			
+			assert(bufflen == buffindex && "buffsize ok");
+			
+			connect_send_close(settings.targetip,settings.useport,buff,buffindex);
+			free(buff);
+			printf("send SendOp with key:%d value:%d\n",key.mKey,value.mValue);
+		}else if(strncmp("search",command,4)==0){
+			scanf("%d",&key.mKey);
+			printf("try to %s %d\n",command,key.mKey);
+			//make SearchOp
+			buffindex = 0;
+			bufflen = 1+8+key.size()+4+4+2;//[OP id key level ip port]
+			buff = (char*)malloc(bufflen);
+			buff[buffindex++] = SearchOp;
+			
+			serialize_longlong(buff,&buffindex,tmpid);
+			
+			buffindex+=key.Serialize(&buff[buffindex]);
+			serialize_int(buff,&buffindex,tmptargetlevel);
+			serialize_int(buff,&buffindex,settings.myip);
+			serialize_short(buff,&buffindex,settings.useport);
+			
+			assert(bufflen == buffindex && "buffsize ok");
+			
+			connect_send_close(settings.targetip,settings.useport,buff,buffindex);
+			printf("send SerchOp with key:%d\n",key.mKey);
+			
+			free(buff);
+		} 
+	}
 	
 	mulio.eventloop();
 }

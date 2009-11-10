@@ -34,7 +34,8 @@ private:
 	int fds_set_all(fd_set* fds);
 public:
 	void SetCallback(int (*cb)(int));
-	void SetAcceptSocket(int socket);
+	void SetAcceptSocket(const int socket);
+	void SetSocket(const int socket);
 	void worker(void);
 	void eventloop(void);
 	void run(void);

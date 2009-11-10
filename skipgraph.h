@@ -1,4 +1,4 @@
-#define MAXLEVEL 32
+#define MAXLEVEL 3
 #include "mytcplib.h"
 #include<vector>
 #include<set>
@@ -31,15 +31,7 @@ public:
 	address_t mAddress;
 	
 	int send(void* buff,int& bufflen){
-		if(mSocket != 0){
-			return write(mSocket,buff,bufflen);
-		}else{
-			if(mFlagValid){
-				return connect_send(&mSocket,mAddress.ip,mAddress.port,buff,bufflen);
-			}else{
-				return 0;
-			}
-		}
+		assert(!"don't call this funcion\n");
 		return 0;
 	}
 	void set(int socket,KeyType& key,int ip,long long id,unsigned short port){
@@ -90,11 +82,17 @@ public:
 	int operator<(sg_node<KeyType,ValueType> rightside){
 		return mKey < rightside.mKey;
 	}
-	int operator<(KeyType rightside){
+	int operator<(const KeyType rightside){
 		return mKey < rightside;
 	}
-	int operator>(KeyType rightside){
+	int operator>(const KeyType rightside){
 		return mKey > rightside;
+	}
+	int operator<=(const KeyType rightside){
+		return mKey <= rightside;
+	}
+	int operator>=(const KeyType rightside){
+		return mKey >= rightside;
 	}
 	void setMaxLevel(unsigned int newmax){
 		if(newmax>mRight.size() || newmax>mLeft.size()){
@@ -121,12 +119,22 @@ public :
 		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
 		return mKey<rightside.mKey;
 	}
-	int operator>(intkey& rightside)
+	int operator>(const intkey& rightside)
 	{
 		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
 		return mKey>rightside.mKey;
 	}
-	int operator==(intkey rightside)
+	int operator<=(const intkey& rightside)
+	{
+		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
+		return mKey<=rightside.mKey;
+	}
+	int operator>=(const intkey& rightside)
+	{
+		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
+		return mKey>=rightside.mKey;
+	}
+	int operator==(const intkey rightside)
 	{
 		return mKey==rightside.mKey;
 	}
