@@ -15,7 +15,7 @@
 int create_tcpsocket(void);
 char* my_ntoa(int ip);
 void bind_inaddr_any(const int socket,const unsigned short port);
-void connect_port_ip(const int socket,const int ip,const unsigned short port);
+int connect_port_ip(const int socket,const int ip,const unsigned short port);
 
 int connect_send_close(const int ip,const unsigned short port,const void* buff,const size_t bufflen);
 int connect_send(int* socket,const int ip,const unsigned short port,const void* buff,const size_t bufflen);

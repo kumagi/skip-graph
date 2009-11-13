@@ -22,7 +22,8 @@ void bind_inaddr_any(const int socket,const unsigned short port){
 		exit (0);
 	}
 }
-void connect_port_ip(const int socket,const int ip,const unsigned short port){
+int connect_port_ip(const int socket,const int ip,const unsigned short port){
+	//return 0 if succeed
 	
 	struct sockaddr_in addr;
 	bzero((char*)&addr,sizeof(addr));
@@ -32,22 +33,28 @@ void connect_port_ip(const int socket,const int ip,const unsigned short port){
 	
 	if(connect(socket,(struct sockaddr*)&addr,sizeof(addr)) != 0){
 		fprintf(stderr,"target:%s\n",my_ntoa(ip));
-		perror("connect");
-		exit(0);
+		return 1;
 	}
+	return 0;
 }
 
 int connect_send_close(const int ip,const unsigned short port,const void* buff,const size_t bufflen){
+	// return how many bytes sent
 	int socket = create_tcpsocket();
+	int flag;
 	set_linger(socket);
-	connect_port_ip(socket,ip,port);
+	
+	flag = connect_port_ip(socket,ip,port);
+	if(flag) {
+		return 0;
+	}
 	size_t postsend=0,tmpsend;
 	while(postsend != bufflen){
 		tmpsend = write(socket,buff,bufflen);
 		if(tmpsend>0){
 			postsend+=tmpsend;
 		}else{
-			return 0;
+			return postsend;
 		}
 	}
 	close(socket);

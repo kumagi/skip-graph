@@ -4,21 +4,42 @@
 #include<set>
 
 struct settings{
-	unsigned short useport;
 	int myip;
+	unsigned short myport;
 	int targetip;
+	unsigned short targetport;
 	int verbose;
 	int threads;
 }settings;
 const char keyop = 7;
 
 
-struct address{
+class address{
+public:
 	int ip;
 	unsigned short port;
 	unsigned long long id;
+	address(const int i,const unsigned short p){
+		ip = i;
+		port = p;
+		id = 0;
+	}
+	address(const address& ad){
+		ip = ad.ip;
+		port = ad.port;
+		id = ad.id;
+	}
+	address(void){
+		ip = 0;
+		port = 0;
+		id = 0;
+	}
+	
+	bool operator<(const class address& ad) const{
+		return ip<ad.ip;
+	}
+	
 };
-typedef address address_t;
 
 
 template<typename KeyType>
@@ -27,19 +48,11 @@ public:
 	KeyType mKey;
 	long long mId;
 	int mSocket;
-	char mFlagValid;
-	address_t mAddress;
+	char mValidFlag;
+	class address mAddress;
 	
 	int send(void* buff,int& bufflen){
-		if(mSocket != 0){
-			return write(mSocket,buff,bufflen);
-		}else{
-			if(mFlagValid){
-				return connect_send(&mSocket,mAddress.ip,mAddress.port,buff,bufflen);
-			}else{
-				return 0;
-			}
-		}
+		assert(!"don't call this funcion\n");
 		return 0;
 	}
 	void set(int socket,KeyType& key,int ip,long long id,unsigned short port){
@@ -49,8 +62,22 @@ public:
 		mAddress.ip = ip;
 		mAddress.port = port;
 		mAddress.id = id;
-		mFlagValid = 1;
+		mValidFlag = 1;
 	}
+	sg_neighbor(void){
+		mKey.mValidFlag = 0;
+		mId = -1;
+		mSocket = 0;
+		mValidFlag = 0;
+	}
+	sg_neighbor(const class sg_neighbor<KeyType>& ngn){
+		mKey = ngn.mKey;
+		mId = ngn.mId;
+		mSocket = ngn.mSocket;
+		mAddress = ngn.mAddress;
+		mValidFlag = 1;
+	}
+		
 };
 
 long long gId = 0;
@@ -62,19 +89,19 @@ public:
 	unsigned int mMaxLevel;
 	long long mId;
 	sg_neighbor<KeyType> mPointer;
-	std::vector<sg_neighbor<KeyType> > mRight;
-	std::vector<sg_neighbor<KeyType> > mLeft;
+	std::vector<sg_neighbor<KeyType>*> mRight;
+	std::vector<sg_neighbor<KeyType>*> mLeft;
 	sg_node(){
 		mId = gId;
 		mMaxLevel = MAXLEVEL;
 		mPointer.mId = gId;
 		mPointer.mAddress.ip = settings.myip;
-		mPointer.mAddress.port = settings.useport;
+		mPointer.mAddress.port = settings.myport;
 		mPointer.mAddress.id = gId++;
 		mRight.reserve(mMaxLevel);
 		mLeft.reserve(mMaxLevel);
 	}
-	sg_node(KeyType& k,ValueType& v){
+	sg_node(const KeyType& k,const ValueType& v){
 		mMaxLevel = 32;
 		mKey = k;
 		mValue = v;
@@ -82,21 +109,17 @@ public:
 		mPointer.mKey = k;
 		mPointer.mId = gId;
 		mPointer.mAddress.ip = settings.myip;
-		mPointer.mAddress.port = settings.useport;
+		mPointer.mAddress.port = settings.myport;
 		mPointer.mAddress.id = gId++;
 		mRight.reserve(mMaxLevel);
 		mLeft.reserve(mMaxLevel);
 	}
-	int operator<(sg_node<KeyType,ValueType> rightside){
+	
+	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const {
 		return mKey < rightside.mKey;
 	}
-	int operator<(KeyType rightside){
-		return mKey < rightside;
-	}
-	int operator>(KeyType rightside){
-		return mKey > rightside;
-	}
-	void setMaxLevel(unsigned int newmax){
+	
+	void setMaxLevel(const unsigned int newmax){
 		if(newmax>mRight.size() || newmax>mLeft.size()){
 			mRight.reserve(newmax);
 			mLeft.reserve(newmax);
@@ -121,12 +144,22 @@ public :
 		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
 		return mKey<rightside.mKey;
 	}
-	int operator>(intkey& rightside)
+	int operator>(const intkey& rightside)
 	{
 		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
 		return mKey>rightside.mKey;
 	}
-	int operator==(intkey rightside)
+	int operator<=(const intkey& rightside)
+	{
+		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
+		return mKey<=rightside.mKey;
+	}
+	int operator>=(const intkey& rightside)
+	{
+		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
+		return mKey>=rightside.mKey;
+	}
+	int operator==(const intkey rightside)
 	{
 		return mKey==rightside.mKey;
 	}

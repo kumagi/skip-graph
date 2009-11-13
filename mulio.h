@@ -17,10 +17,10 @@
 class mulio{
 private:
 	// socket list
-	std::set<int>mSocketList;
-	std::deque<int>mActiveSocket;
-	std::vector<int>mDeleteSocket;
-	std::vector<int>mAddSocket;
+	std::set<int> mSocketList;
+	std::deque<int> mActiveSocket;
+	std::vector<int> mDeleteSocket;
+	std::vector<int> mAddSocket;
 	
 	int mAcceptSocket;
 	int mMaxFd;

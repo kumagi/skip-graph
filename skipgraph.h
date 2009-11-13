@@ -4,21 +4,42 @@
 #include<set>
 
 struct settings{
-	unsigned short useport;
 	int myip;
+	unsigned short myport;
 	int targetip;
+	unsigned short targetport;
 	int verbose;
 	int threads;
 }settings;
 const char keyop = 7;
 
 
-struct address{
-	int ip;
-	unsigned short port;
-	unsigned long long id;
+class address{
+public:
+	int mIP;
+	unsigned short mPort;
+	int mSocket;
+	address(const int i,const unsigned short p){
+		mIP = i;
+		mPort = p;
+		mSocket = 0;
+	}
+	address(const address& ad){
+		mIP = ad.mIP;
+		mPort = ad.mPort;
+		mSocket = ad.mSocket;
+	}
+	address(void){
+		mIP = 0;
+		mPort = 0;
+		mSocket = 0;
+	}
+	
+	bool operator<(const class address& ad) const{
+		return mIP*mPort < ad.mIP*ad.mPort;
+	}
+	
 };
-typedef address address_t;
 
 
 template<typename KeyType>
@@ -26,9 +47,8 @@ class sg_neighbor{
 public:
 	KeyType mKey;
 	long long mId;
-	int mSocket;
-	char mFlagValid;
-	address_t mAddress;
+	char mValidFlag;
+	class address mAddress;
 	
 	int send(void* buff,int& bufflen){
 		assert(!"don't call this funcion\n");
@@ -37,12 +57,32 @@ public:
 	void set(int socket,KeyType& key,int ip,long long id,unsigned short port){
 		mKey = key;
 		mId = id;
-		mSocket = socket;
-		mAddress.ip = ip;
-		mAddress.port = port;
-		mAddress.id = id;
-		mFlagValid = 1;
+		mAddress.mSocket = socket;
+		mAddress.mIP = ip;
+		mAddress.mPort = port;
+		mValidFlag = 1;
 	}
+	sg_neighbor(const int socket,const KeyType& key,const int& ip,const long long& id,const unsigned short& port){
+		mKey = key;
+		mId = id;
+		mAddress.mSocket = socket;
+		mAddress.mIP = ip;
+		mAddress.mPort = port;
+		mValidFlag = 1;
+	}
+	sg_neighbor(void){
+		mKey.mValidFlag = 0;
+		mId = -1;
+		mAddress.mSocket = 0;
+		mValidFlag = 0;
+	}
+	sg_neighbor(const class sg_neighbor<KeyType>& ngn){
+		mKey = ngn.mKey;
+		mId = ngn.mId;
+		mAddress = ngn.mAddress;
+		mValidFlag = 1;
+	}
+		
 };
 
 long long gId = 0;
@@ -51,55 +91,28 @@ class sg_node{
 public:
 	KeyType mKey;
 	ValueType mValue;
-	unsigned int mMaxLevel;
 	long long mId;
-	sg_neighbor<KeyType> mPointer;
-	std::vector<sg_neighbor<KeyType> > mRight;
-	std::vector<sg_neighbor<KeyType> > mLeft;
+	sg_neighbor<KeyType>* mLeft[MAXLEVEL];
+	sg_neighbor<KeyType>* mRight[MAXLEVEL];
 	sg_node(){
-		mId = gId;
-		mMaxLevel = MAXLEVEL;
-		mPointer.mId = gId;
-		mPointer.mAddress.ip = settings.myip;
-		mPointer.mAddress.port = settings.useport;
-		mPointer.mAddress.id = gId++;
-		mRight.reserve(mMaxLevel);
-		mLeft.reserve(mMaxLevel);
+		mId = gId++;
+		for(int i=0;i<MAXLEVEL;i++){
+			mLeft[i] = NULL;
+			mRight[i] = NULL;
+		}
 	}
-	sg_node(KeyType& k,ValueType& v){
-		mMaxLevel = 32;
+	sg_node(const KeyType& k,const ValueType& v){
 		mKey = k;
 		mValue = v;
-		mId = gId;
-		mPointer.mKey = k;
-		mPointer.mId = gId;
-		mPointer.mAddress.ip = settings.myip;
-		mPointer.mAddress.port = settings.useport;
-		mPointer.mAddress.id = gId++;
-		mRight.reserve(mMaxLevel);
-		mLeft.reserve(mMaxLevel);
-	}
-	int operator<(sg_node<KeyType,ValueType> rightside){
-		return mKey < rightside.mKey;
-	}
-	int operator<(const KeyType rightside){
-		return mKey < rightside;
-	}
-	int operator>(const KeyType rightside){
-		return mKey > rightside;
-	}
-	int operator<=(const KeyType rightside){
-		return mKey <= rightside;
-	}
-	int operator>=(const KeyType rightside){
-		return mKey >= rightside;
-	}
-	void setMaxLevel(unsigned int newmax){
-		if(newmax>mRight.size() || newmax>mLeft.size()){
-			mRight.reserve(newmax);
-			mLeft.reserve(newmax);
-			mMaxLevel = newmax;
+		mId = gId++;
+		for(int i=0;i<MAXLEVEL;i++){
+			mLeft[i] = NULL;
+			mRight[i] = NULL;
 		}
+	}
+	
+	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const {
+		return mKey < rightside.mKey;
 	}
 };
 
@@ -112,6 +125,12 @@ public :
 	intkey(int k);
 	int Receive(int socket);//it returns received size
 	int Serialize(void* buff);//it returns writed size
+	bool isMaximum(void){
+		return mKey == 0x7fffffff;
+	}
+	bool isMinimum(void){
+		return mKey == (int)0x80000000;
+	}
 	void Maximize(void);
 	void Minimize(void);
 	int operator<(intkey& rightside)
