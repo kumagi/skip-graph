@@ -1,6 +1,10 @@
-#define MAXLEVEL 3
+#define MAXLEVEL 8
 #include "mytcplib.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
 #include<vector>
+#include<list>
 #include<set>
 
 struct settings{
@@ -19,70 +23,79 @@ public:
 	int mIP;
 	unsigned short mPort;
 	int mSocket;
-	address(const int i,const unsigned short p){
+	int mCounter;
+	address(const int s,const int i,const unsigned short p){
 		mIP = i;
 		mPort = p;
-		mSocket = 0;
+		mSocket = s;
+		mCounter = 1;
 	}
 	address(const address& ad){
 		mIP = ad.mIP;
 		mPort = ad.mPort;
 		mSocket = ad.mSocket;
+		mCounter = ad.mCounter;
 	}
 	address(void){
 		mIP = 0;
 		mPort = 0;
 		mSocket = 0;
+		mCounter = 0;
+	}
+	~address(void){
+		if(mSocket!=0){
+			close(mSocket);
+		}
 	}
 	
-	bool operator<(const class address& ad) const{
-		return mIP*mPort < ad.mIP*ad.mPort;
+	address& operator--(void){
+		mCounter--;
+		if(mCounter <= 0 && mSocket!=0){
+			close(mSocket);
+		}
+		return *this;
+	}
+	address& operator++(void){
+		mCounter++;
+		return *this;
+	}
+	bool operator==(const address& ad)const {
+		return (mIP==ad.mIP && mPort==ad.mPort);
 	}
 	
 };
-
 
 template<typename KeyType>
 class sg_neighbor{
 public:
 	KeyType mKey;
 	long long mId;
-	char mValidFlag;
-	class address mAddress;
+	address* mAddress;
 	
 	int send(void* buff,int& bufflen){
 		assert(!"don't call this funcion\n");
 		return 0;
 	}
-	void set(int socket,KeyType& key,int ip,long long id,unsigned short port){
+	void set(const int socket,const KeyType& key,address* address,const long long id){
+		if(mAddress->mSocket != 0 && mAddress->mSocket != address->mSocket ){
+			mAddress->mCounter--;
+		}
 		mKey = key;
 		mId = id;
-		mAddress.mSocket = socket;
-		mAddress.mIP = ip;
-		mAddress.mPort = port;
-		mValidFlag = 1;
+		mAddress = address;
+		mAddress->mCounter++;
 	}
-	sg_neighbor(const int socket,const KeyType& key,const int& ip,const long long& id,const unsigned short& port){
+	sg_neighbor(const int socket,const KeyType& key,address* ad,const long long id)
+	{
 		mKey = key;
 		mId = id;
-		mAddress.mSocket = socket;
-		mAddress.mIP = ip;
-		mAddress.mPort = port;
-		mValidFlag = 1;
-	}
-	sg_neighbor(void){
-		mKey.mValidFlag = 0;
-		mId = -1;
-		mAddress.mSocket = 0;
-		mValidFlag = 0;
+		mAddress = ad;
 	}
 	sg_neighbor(const class sg_neighbor<KeyType>& ngn){
 		mKey = ngn.mKey;
 		mId = ngn.mId;
 		mAddress = ngn.mAddress;
-		mValidFlag = 1;
 	}
-		
 };
 
 long long gId = 0;
@@ -120,11 +133,10 @@ public:
 class intkey{
 public :
 	int mKey;
-	int mValidFlag;
-	intkey(){mValidFlag = 0;};
+	intkey(){};
 	intkey(int k);
-	int Receive(int socket);//it returns received size
-	int Serialize(void* buff);//it returns writed size
+	int Receive(const int socket);//it returns received size
+	int Serialize(const void* buff)const;//it returns writed size
 	bool isMaximum(void){
 		return mKey == 0x7fffffff;
 	}
@@ -133,7 +145,7 @@ public :
 	}
 	void Maximize(void);
 	void Minimize(void);
-	int operator<(intkey& rightside)
+	int operator<(const intkey& rightside)
 	{
 		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
 		return mKey<rightside.mKey;
@@ -143,16 +155,6 @@ public :
 		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
 		return mKey>rightside.mKey;
 	}
-	int operator<=(const intkey& rightside)
-	{
-		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
-		return mKey<=rightside.mKey;
-	}
-	int operator>=(const intkey& rightside)
-	{
-		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
-		return mKey>=rightside.mKey;
-	}
 	int operator==(const intkey rightside)
 	{
 		return mKey==rightside.mKey;
@@ -161,30 +163,21 @@ public :
 };
 intkey::intkey(int k){
 	mKey = k;
-	mValidFlag = 1;
 }
 void intkey::Maximize(void){
 	mKey = 0x7fffffff;
-	mValidFlag = 1;
 }
 void intkey::Minimize(void){
 	mKey = 0x80000000;
-	mValidFlag = 1;
 }
-inline int intkey::Receive(int socket)
+inline int intkey::Receive(const int socket)
 {
 	int chklen;
 	chklen = read(socket,&mKey,4);
-	if(chklen == 4){
-		mValidFlag = 1;
-	}
 	return chklen;
 }
-inline int intkey::Serialize(void* buf)
+inline int intkey::Serialize(const void* buf) const
 {
-	if(mValidFlag==0){
-		return 0;
-	}
 	int* target = (int*)buf;
 	*target = mKey;
 	return 4;
@@ -195,46 +188,32 @@ class intvalue{
 public :
 	int mValue;
 	intvalue(void){};
-	intvalue(int& v);
-	intvalue(int v);
-	void setValue(int& v);
-	int Receive(int socket);
-	int Serialize(void* buff);
+	intvalue(const int v);
+	void setValue(const int v);
+	int Receive(const int socket);
+	int Serialize(const void* buff)const;
 	int size(void){return 4;}
 };
-intvalue::intvalue(int& v){
+intvalue::intvalue(const int v){
 	mValue = v;
 }
-intvalue::intvalue(int v){
-	mValue = v;
-}
-inline void intvalue::setValue(int& v)
+inline void intvalue::setValue(const int v)
 {
 	mValue = v;
 }
-inline int intvalue::Receive(int socket)
+inline int intvalue::Receive(const int socket)
 {
 	int chklen;
 	chklen = read(socket,&mValue,4);
 	return chklen;
 }
-inline int intvalue::Serialize(void* buf)
+inline int intvalue::Serialize(const void* buf)const
 {
 	int* target = (int*)buf;
 	*target = mValue;
 	return 4;
 }
 
-int my_aton(char* ipaddress){
-	struct in_addr tmp_inaddr;
-	int ip = 0;
-	if(inet_aton(optarg,&tmp_inaddr)){
-		ip = tmp_inaddr.s_addr;
-	}else {
-		printf("aton:address invalid\n");
-	}
-	return ip;
-}
 
 
 /* random functions */
@@ -242,6 +221,7 @@ unsigned int sysrand(void){
 	FILE* fp = fopen("/dev/random","r");
 	int random;
 	fread(&random,4,1,fp);
+	printf("random:%d\n",random);
 	return random;
 }
 long long int rand64(void){
@@ -294,26 +274,20 @@ public:
 		printf("vector:%x%x\n",upper,(unsigned int)mVector);
 		printf("\n");
 	}
-	int compare(class membership_vector mv){
-		int count = 0;
-		long long diff = mVector^mv.mVector;
-		while(!(diff&1) && count!=MAXLEVEL-1){
-			count++;
-			diff >>= 1;
-		}
-		return count;
-	}
 	int compare(long long mv){
 		int count = 0;
 		long long diff = mVector^mv;
-		while(!(diff&1) && count!=MAXLEVEL-1){
+		while((diff&1)==0 && count<MAXLEVEL-1){
 			count++;
 			diff >>= 1;
 		}
 		return count;
 	}
-	membership_vector(void){
+	void init(void){
 		mVector = rand64();
+	}
+	membership_vector(void){
+		init();
 	}
 };
 

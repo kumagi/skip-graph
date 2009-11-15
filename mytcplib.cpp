@@ -143,3 +143,14 @@ int chk_myip(void){
 	close(fd);
 	return (int)((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr.s_addr;
 }
+
+int my_aton(char* ipaddress){
+	struct in_addr tmp_inaddr;
+	int ip = 0;
+	if(inet_aton(optarg,&tmp_inaddr)){
+		ip = tmp_inaddr.s_addr;
+	}else {
+		printf("aton:address invalid\n");
+	}
+	return ip;
+}

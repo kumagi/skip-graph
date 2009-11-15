@@ -28,7 +28,6 @@ typedef class sg_neighbor<intkey> sg_Neighbor;
 class mulio mulio;
 class membership_vector myVector;
 std::list<sg_Node> NodeList;
-std::list<class address> gAddressList;
 
 //param
 std::list<sg_Node>::iterator NoNode = (std::list<sg_Node>::iterator)NULL;
@@ -55,31 +54,6 @@ void print_nodelist(void){
 		fprintf(stderr,"address mRight diff:%d\n",(unsigned int)&it->mRight[0]-(unsigned int)&*it);
 		*/
 	}
-}
-class address* get_some_address(void){
-	std::list<address>::iterator it = gAddressList.begin();
-	for(;it!=gAddressList.end();it++){
-		if(it->mIP != settings.myip || it->mPort != settings.myport){
-			return &*it;
-		}
-	}
-	return NULL;
-}
-	
-
-class address* search_from_addresslist(int ip,unsigned short port){
-	std::list<address>::iterator it = gAddressList.begin();
-	for(;it!=gAddressList.end();it++){
-		if(it->mIP==ip && it->mPort==port){
-			return &*it;
-		}
-	}
-	int newsocket = create_tcpsocket();
-	connect_port_ip(newsocket, ip, port);
-	class address* newaddress;
-	newaddress = new address(newsocket,ip,port);
-	gAddressList.push_back(*newaddress);
-	return newaddress;
 }
 
 template<typename KeyType>
@@ -108,23 +82,6 @@ std::list<sg_Node>::iterator search_node_by_id(long long id){
 		++it;
 	}
 	return NoNode;
-}
-
-sg_Node* search_node_by_key(long long id){
-	//it may return nearest key I have
-	// and now, it returns 
-	if(NodeList.empty()){
-		return NULL;
-	}
-	std::list<sg_Node>::iterator it = NodeList.begin();
-	
-	while(it != NodeList.end() ){
-		if(it->mId == id){
-			return &*it;
-		}
-		++it;
-	}
-	return NULL;
 }
 
 
@@ -161,30 +118,30 @@ int receive_key(int socket,size_t* keylength,char** key){
 	*key[*keylength+1] = '\0';
 	return 0;
 }
-int send_to_address(class address& ad,const char* buff,const int bufflen){
+int send_with_connect(sg_neighbor<intkey>* sgn,const char* buff,const int bufflen){
 	int sendsize;
-	if(ad.mSocket != 0){
-		sendsize = write(ad.mSocket,buff,bufflen);
+	if(sgn->mAddress->mSocket != 0){
+		sendsize = write(sgn->mAddress->mSocket,buff,bufflen);
 		if(sendsize<=0){
-			fprintf(stderr,"send_to_address:failed to write %d\n",ad.mSocket);
+			fprintf(stderr,"send_with_connect:error\n");
 		}
 	}else{
 		std::list<address>::iterator it = gAddressList.begin();
 		for(;it!=gAddressList.end();it++){
-			if(it->mIP==ad.mIP && it->mPort==ad.mPort){
+			if(it->mIP==sgn->mAddress->mIP && it->mPort==sgn->mAddress->mPort){
 				break;
 			}
 		}
 		if(it!=gAddressList.end()){
-			sendsize = connect_send(&ad.mSocket,ad.mIP,ad.mPort,buff,bufflen);
+			sendsize = connect_send(&sgn->mAddress->mSocket,sgn->mAddress->mIP,sgn->mAddress->mPort,buff,bufflen);
 			if(sendsize>0){
-				mulio.SetSocket(ad.mSocket);
-				gAddressList.push_back(address(ad.mSocket,ad.mIP,ad.mPort));
+				mulio.SetSocket(sgn->mAddress->mSocket);
+				gAddressList.push_back(address(sgn->mAddress->mSocket,sgn->mAddress->mIP,sgn->mAddress->mPort));
 				return sendsize;
 			}else{
 				// delete the address from listit = gAddressList.begin();
 				for(;it!=gAddressList.end();it++){
-					if(it->mIP==ad.mIP && it->mPort==ad.mPort){
+					if(it->mIP==sgn->mAddress->mIP && it->mPort==sgn->mAddress->mPort){
 						gAddressList.erase(it);
 						break;
 					}
@@ -194,9 +151,8 @@ int send_to_address(class address& ad,const char* buff,const int bufflen){
 	}
 	return 0;
 }
-
 int main_thread(int s){
-	int socket = s;
+	int socket = s,tmpsocket;
 	char op;
 	int chklen;
 	unsigned long long targetid,originid;
@@ -209,8 +165,7 @@ int main_thread(int s){
 	int bufflen,buffindex;
 	char left_or_right;
 	std::list<class address>::iterator AddressIt;
-	std::list<sg_Node>::iterator NodeIt;
-	class address *newAddress,*tmpaddress;
+	class address* newAddress;
 	
 	intkey tmpkey;
 	intvalue tmpvalue;
@@ -222,14 +177,8 @@ int main_thread(int s){
 	while(EndFlag == 0){
 		chklen = read(socket,&op,1);
 		if(chklen <= 0){
-			fprintf(stderr," closed %d\n",socket);
+			fprintf(stderr," close\n");
 			close(socket);
-			for(AddressIt = gAddressList.begin(); AddressIt != gAddressList.end(); ++AddressIt){
-				if(AddressIt->mSocket == socket){
-					gAddressList.erase(AddressIt);
-					break;
-				}
-			}
 			EndFlag = 1;
 			DeleteFlag = 1;
 			break;
@@ -310,9 +259,9 @@ int main_thread(int s){
 					assert(bufflen == buffindex && "buffsize ok");
 					
 					if(left_or_right == Right){
-						send_to_address(*tmpnode->mRight[targetlevel]->mAddress,buff,bufflen);
+						send_with_connect(tmpnode->mRight[targetlevel],buff,bufflen);
 					}else{
-						send_to_address(*tmpnode->mLeft[targetlevel]->mAddress,buff,bufflen);
+						send_with_connect(tmpnode->mLeft[targetlevel],buff,bufflen);
 					}
 					free(buff);
 				}else{
@@ -410,22 +359,11 @@ int main_thread(int s){
 			// Build up list with memvership vector
 			//prepare buffer
 			buffindex = 0;
-			bufflen = 1+8+newnode->mKey.size()+4+8+2+8;
+			bufflen = 1+8+tmpnode->mKey.size()+4+8+2+8;
 			buff = (char*)malloc(bufflen);
 			buff[buffindex++] = TreatOp;
 			if(NodeList.size()>0){
-				for(NodeIt = NodeList.begin(); NodeIt != NodeList.end(); ++NodeIt){
-					if(NodeIt->mLeft[0] && (NodeIt->mLeft[0]->mAddress->mIP != settings.myip || NodeIt->mLeft[0]->mAddress->mPort != settings.myport)){
-						serialize_longlong(buff,&buffindex,NodeIt->mLeft[0]->mId);
-						break;
-					}else if(NodeIt->mRight[0] && (NodeIt->mRight[0]->mAddress->mIP != settings.myip || NodeIt->mRight[0]->mAddress->mPort != settings.myport)){
-						serialize_longlong(buff,&buffindex,NodeIt->mRight[0]->mId);
-						break;
-					}
-				}
-				if( NodeIt == NodeList.end()){
-					serialize_longlong(buff,&buffindex,0);
-				}
+				serialize_longlong(buff,&buffindex,NodeList.front().mId);
 			}else{
 				targetid=0;
 				serialize_longlong(buff,&buffindex,targetid);
@@ -574,9 +512,9 @@ int main_thread(int s){
 					assert(bufflen == buffindex && "buffsize ok");
 					
 					if(left_or_right == Right){
-						send_to_address(*tmpnode->mRight[tmplevel]->mAddress,buff,bufflen);
+						send_with_connect(tmpnode->mRight[tmplevel],buff,bufflen);
 					}else{
-						send_to_address(*tmpnode->mLeft[tmplevel]->mAddress,buff,bufflen);
+						send_with_connect(tmpnode->mLeft[tmplevel],buff,bufflen);
 					}
 					free(buff);
 					EndFlag = 1;
@@ -584,7 +522,17 @@ int main_thread(int s){
 					if(settings.verbose>1)
 						fprintf(stderr,"finally treated by ID:%lld key:%d\n",tmpnode->mId,tmpnode->mKey.mKey);
 					
-					//send IntroduceOP to opposite site
+					//sent IntroduceOP to opposite site
+					if(settings.verbose>1){
+						if(left_or_right == Left && tmpnode->mLeft[0]){
+							fprintf(stderr,"sending introduceOp from %d to %d\n",tmpnode->mKey.mKey,tmpnode->mLeft[0]->mKey.mKey);
+						}
+					}
+					if(settings.verbose>1){
+						if(left_or_right == Right && tmpnode->mRight[0]){
+							fprintf(stderr,"sending introduceOp from %d to %d\n",tmpnode->mKey.mKey,tmpnode->mRight[0]->mKey.mKey);
+						}
+					}
 					targetlevel = 0;
 					buffindex = 0;
 					bufflen = 1+8+tmpkey.size()+4+8+2+4+8;
@@ -603,22 +551,11 @@ int main_thread(int s){
 					serialize_short(buff,&buffindex,originport);
 					serialize_int(buff,&buffindex,targetlevel);
 					serialize_longlong(buff,&buffindex,originvector);
-					
 					assert(bufflen == buffindex);
 					if(left_or_right == Left){
-						send_to_address(*tmpnode->mLeft[0]->mAddress,buff,buffindex);
+						connect_send_close(tmpnode->mLeft[0]->mAddress->mIP,tmpnode->mLeft[0]->mAddress->mPort,buff,bufflen);
 					}else{
-						send_to_address(*tmpnode->mRight[0]->mAddress,buff,buffindex);
-					}
-					if(settings.verbose>1){
-						if(left_or_right == Left && tmpnode->mLeft[0]){
-							fprintf(stderr,"sending introduceOp from %d to %d by socket:%d\n",tmpnode->mKey.mKey,tmpnode->mLeft[0]->mKey.mKey,tmpnode->mLeft[0]->mAddress->mSocket);
-						}
-					}
-					if(settings.verbose>1){
-						if(left_or_right == Right && tmpnode->mRight[0]){
-							fprintf(stderr,"sending introduceOp from %d to %d by socket:%d\n",tmpnode->mKey.mKey,tmpnode->mRight[0]->mKey.mKey,tmpnode->mRight[0]->mAddress->mSocket);
-						}
+						connect_send_close(tmpnode->mRight[0]->mAddress->mIP,tmpnode->mRight[0]->mAddress->mPort,buff,bufflen);
 					}
 					free(buff);
 					
@@ -636,16 +573,13 @@ int main_thread(int s){
 					serialize_int(buff,&buffindex,settings.myip);
 					serialize_longlong(buff,&buffindex,tmpnode->mId);
 					serialize_short(buff,&buffindex,settings.myport);
-					
-					tmpaddress = search_from_addresslist(originip,originport);
-					
 					for(int i=0;i<=targetlevel;i++){
 						serialize_int(buff,&buffindex,i);
 						buff[buffindex++] = left_or_right == Left ? Right : Left;
-						send_to_address(*tmpaddress,buff,bufflen);
+						connect_send(&tmpsocket,originip,originport,buff,buffindex);
 						buffindex -= sizeof(int)+1;
 						
-						mulio.SetSocket(tmpaddress->mSocket);
+						mulio.SetSocket(tmpsocket);
 						if(left_or_right == Left){
 							if(tmpnode->mLeft[targetlevel]){
 								tmpnode->mLeft[targetlevel]->set(socket,tmpkey,newAddress,originid);
@@ -681,11 +615,11 @@ int main_thread(int s){
 						
 						if(left_or_right == Left){
 							if(tmpnode->mRight[targetlevel]){
-								send_to_address(*tmpnode->mRight[targetlevel]->mAddress,buff,bufflen);
+								send_with_connect(tmpnode->mRight[targetlevel],buff,bufflen);
 							}
 						}else{
 							if(tmpnode->mLeft[targetlevel]){
-								send_to_address(*tmpnode->mLeft[targetlevel]->mAddress,buff,bufflen);
+								send_with_connect(tmpnode->mLeft[targetlevel],buff,bufflen);
 							}
 						}
 						if(settings.verbose>1){
@@ -713,8 +647,7 @@ int main_thread(int s){
 			
 			read(socket,&targetid,8);
 			tmpnode = search_node_by_id(targetid);
-			fprintf(stderr,"found %lld key:%d\n",tmpnode->mId,tmpnode->mKey.mKey);
-			
+			fprintf(stderr,"found %lld\n",tmpnode->mId);
 			tmpkey.Receive(socket);
 			read(socket,&originip,4);
 			read(socket,&originid,8);
@@ -740,30 +673,27 @@ int main_thread(int s){
 			serialize_int(buff,&buffindex,settings.myip);
 			serialize_longlong(buff,&buffindex,tmpnode->mId);
 			serialize_short(buff,&buffindex,settings.myport);
-			
-			tmpaddress = search_from_addresslist(originip,originport);
 			for(int i=0;i<=targetlevel;i++){
 				serialize_int(buff,&buffindex,i);
 				buff[buffindex++] = left_or_right == Left ? Right : Left;
-				send_to_address(*tmpaddress,buff,bufflen);
+				
+				connect_send(&tmpsocket,originip,originport,buff,buffindex);
 				buffindex -= sizeof(int)+1;
-				mulio.SetSocket(tmpaddress->mSocket);
+						
+				mulio.SetSocket(tmpsocket);
+				
 				if(left_or_right == Left){
 					if(tmpnode->mLeft[targetlevel]){
 						tmpnode->mLeft[targetlevel]->set(socket,tmpkey,newAddress,originid);
-					}else{
-						tmpnode->mLeft[targetlevel] = new sg_Neighbor(socket,tmpkey,newAddress,originid);
 					}
 				}else{
 					if(tmpnode->mRight[targetlevel]){
 						tmpnode->mRight[targetlevel]->set(socket,tmpkey,newAddress,originid);
-					}else{
-						tmpnode->mRight[targetlevel] = new sg_Neighbor(socket,tmpkey,newAddress,originid);
 					}
 				}
 				printf("Link from %d to %d at level %d in socket:%d\n",tmpnode->mKey.mKey,tmpkey.mKey,i,socket);
+						
 			}
-			
 			free(buff);
 					
 			targetlevel++;
@@ -784,11 +714,11 @@ int main_thread(int s){
 				
 				if(left_or_right == Left){
 					if(tmpnode->mRight[targetlevel]){
-						send_to_address(*tmpnode->mRight[targetlevel]->mAddress,buff,bufflen);
+						send_with_connect(tmpnode->mRight[targetlevel],buff,bufflen);
 					}
 				}else{
 					if(tmpnode->mLeft[targetlevel]){
-						send_to_address(*tmpnode->mLeft[targetlevel]->mAddress,buff,bufflen);
+						send_with_connect(tmpnode->mLeft[targetlevel],buff,bufflen);
 					}
 				}
 				free(buff);
@@ -913,6 +843,54 @@ int main(int argc,char** argv){
 			   settings.verbose,settings.threads,myVector.mVector);
 	}
 	
+	char command[30];
+	
+	intkey key;
+	intvalue value;
+	char* buff;
+	int bufflen,buffindex,tmptargetlevel=MAXLEVEL-1;
+	long long tmpid=0;
+	while(1){
+		printf("command> ");
+		scanf("%s ",command);
+		if(strncmp("set",command,3)==0){
+			scanf("%d %d",&key.mKey,&value.mValue);
+			bufflen = 1 + key.size() + value.size();
+			buffindex = 0;
+			buff = (char*)malloc(bufflen);
+			buff[buffindex++] = SetOp;
+			buffindex += key.Serialize(&buff[buffindex]);
+			buffindex += value.Serialize(&buff[buffindex]);
+			
+			assert(bufflen == buffindex && "buffsize ok");
+			
+			connect_send_close(settings.targetip,settings.myport,buff,buffindex);
+			free(buff);
+			printf("send SendOp with key:%d value:%d\n",key.mKey,value.mValue);
+		}else if(strncmp("search",command,4)==0){
+			scanf("%d",&key.mKey);
+			printf("try to %s %d\n",command,key.mKey);
+			//make SearchOp
+			buffindex = 0;
+			bufflen = 1+8+key.size()+4+4+2;//[OP id key level ip port]
+			buff = (char*)malloc(bufflen);
+			buff[buffindex++] = SearchOp;
+			
+			serialize_longlong(buff,&buffindex,tmpid);
+			
+			buffindex+=key.Serialize(&buff[buffindex]);
+			serialize_int(buff,&buffindex,tmptargetlevel);
+			serialize_int(buff,&buffindex,settings.myip);
+			serialize_short(buff,&buffindex,settings.myport);
+			
+			assert(bufflen == buffindex && "buffsize ok");
+			
+			connect_send_close(settings.targetip,settings.myport,buff,buffindex);
+			printf("send SerchOp with key:%d\n",key.mKey);
+			
+			free(buff);
+		} 
+	}
 	mulio.eventloop();
 }
 

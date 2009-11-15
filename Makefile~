@@ -1,9 +1,7 @@
-OPTS = -O2 -Wall -g
+OPTS = -Wall -O0
 OBJS = kttcp.o mytcplib.o mulio.o 
 
 target:skipgraph
-target:searchtest
-target:settest
 target:tester
 
 tester:tester.o mytcplib.o mulio.o
@@ -22,7 +20,7 @@ searchtest.o:searchtest.cpp
 	g++ searchtest.cpp -o searchtest.o -c $(OPTS)
 
 skipgraph:skipgraph.o mytcplib.o mulio.o
-	g++ skipgraph.o mytcplib.o mulio.o -o skipgraph -pthread -lrt
+	g++ skipgraph.o mytcplib.o mulio.o -o skipgraph -pthread -lrt -g
 
 skipgraph.o:skipgraph.cpp skipgraph.h
 	g++ skipgraph.cpp -o skipgraph.o -c $(OPTS)

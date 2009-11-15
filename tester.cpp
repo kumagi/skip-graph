@@ -1,3 +1,5 @@
+
+#include "skipgraph.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +21,6 @@
 #include <assert.h>//assert
 #include "mulio.h"
 #include "mytcplib.h"
-#include "skipgraph.h"
 
 typedef sg_node<intkey,intvalue> sg_Node;
 
@@ -73,7 +74,7 @@ void print_nodelist(void){
 	std::list<sg_Node*>::iterator it = NodeList.begin();
 	while(it != NodeList.end() ){
 		//if((*it)->mId != (*it)->pPointer.mId){printf("not sanity\n");}
-		printf("%lld: key=%d  value=%d  left=%d right=%d\n",(*it)->mId,(*it)->mKey.mKey,(*it)->mValue.mValue,(*it)->mLeft[0].mKey.mKey,(*it)->mRight[0].mKey.mKey);
+		printf("%lld: key=%d  value=%d  left=%d right=%d\n",(*it)->mId,it->mKey.mKey,(*it)->mValue.mValue,(*it)->mLeft[0].mKey.mKey,(*it)->mRight[0].mKey.mKey);
 		++it;
 	}
 }

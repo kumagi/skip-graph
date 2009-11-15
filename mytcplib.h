@@ -26,5 +26,7 @@ void set_reuse(const int socket);
 void set_keepalive(const int socket);
 void set_linger(const int socket);
 int chk_myip(void);
+int my_aton(char* ipaddress);
 
 #endif /* MYTCPLIB */
+

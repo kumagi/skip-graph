@@ -117,7 +117,7 @@ void mulio::eventloop(void){
 	int socket,deleteflag;
 	while(1){
 		sem_wait(&sem_active);
-		/*
+		//*
 		fprintf(stderr,"All sockets ");
 		printSocketList();
 		fprintf(stderr,"\n");
