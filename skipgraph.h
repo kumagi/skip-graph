@@ -265,7 +265,7 @@ public:
 	bool getVector(int bit){
 		return (mVector>>bit)&1;
 	}
-	int operator[](int bit){
+	bool operator[](int bit){
 		return getVector(bit);
 	}
 	
@@ -288,6 +288,12 @@ public:
 	}
 	membership_vector(void){
 		init();
+	}
+	bool operator==(membership_vector rightside){
+		return mVector == rightside.mVector;
+	}
+	bool operator==(long long rightside){
+		return mVector == mVector;
 	}
 };
 

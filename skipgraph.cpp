@@ -56,7 +56,7 @@ void print_nodelist(void){
 		*/
 	}
 }
-class address* get_some_address(void){
+address* get_some_address(void){
 	std::list<address>::iterator it = gAddressList.begin();
 	for(;it!=gAddressList.end();it++){
 		if(it->mIP != settings.myip || it->mPort != settings.myport){
@@ -67,7 +67,7 @@ class address* get_some_address(void){
 }
 	
 
-class address* search_from_addresslist(int ip,unsigned short port){
+address* search_from_addresslist(int ip,unsigned short port){
 	std::list<address>::iterator it = gAddressList.begin();
 	for(;it!=gAddressList.end();it++){
 		if(it->mIP==ip && it->mPort==port){
@@ -208,9 +208,9 @@ int main_thread(int s){
 	char* buff;
 	int bufflen,buffindex;
 	char left_or_right;
-	std::list<class address>::iterator AddressIt;
+	std::list<address>::iterator AddressIt;
 	std::list<sg_Node>::iterator NodeIt;
-	class address *newAddress,*tmpaddress;
+	address *newAddress,*tmpaddress;
 	
 	intkey tmpkey;
 	intvalue tmpvalue;
@@ -350,17 +350,10 @@ int main_thread(int s){
 			read(socket,&left_or_right,1);
 			
 			
-			newAddress = new address(socket,originip,originport);
-			for(AddressIt=gAddressList.begin();AddressIt!=gAddressList.end();++AddressIt){
-				if(AddressIt->mIP == originip && AddressIt->mPort == originport){
-					break;
-				}
-			}
-			if(AddressIt == gAddressList.end()){
+			newAddress = search_from_addresslist(originip,originport);
+			if(newAddress == NULL){
 				newAddress = new address(socket,originip,originport);
 				gAddressList.push_back(*newAddress);
-			}else{
-				newAddress = &*AddressIt;
 			}
 			
 			if(left_or_right == Left){
@@ -376,12 +369,13 @@ int main_thread(int s){
 					tmpnode->mRight[targetlevel] = new sg_Neighbor(socket,tmpkey,newAddress,originid);
 				}
 			}
-			
-			fprintf(stderr,"target:%d from:%d   targetlevel:%d",tmpnode->mKey.mKey,tmpkey.mKey,targetlevel);
-			if(left_or_right == Left){
-				fprintf(stderr,"  in left side\n");
-			}else{
-				fprintf(stderr,"  in right side\n");
+			if(settings.verbose > 1){
+				fprintf(stderr,"target:%d from:%d   targetlevel:%d",tmpnode->mKey.mKey,tmpkey.mKey,targetlevel);
+				if(left_or_right == Left){
+					fprintf(stderr,"  in left side\n");
+				}else{
+					fprintf(stderr,"  in right side\n");
+				}
 			}
 			mulio.SetSocket(socket);
 			EndFlag = 1;
@@ -408,28 +402,30 @@ int main_thread(int s){
 			newnode = new sg_Node(tmpkey,tmpvalue);
 			
 			// Build up list with memvership vector
-			//prepare buffer
 			buffindex = 0;
 			bufflen = 1+8+newnode->mKey.size()+4+8+2+8;
 			buff = (char*)malloc(bufflen);
 			buff[buffindex++] = TreatOp;
-			if(NodeList.size()>0){
-				for(NodeIt = NodeList.begin(); NodeIt != NodeList.end(); ++NodeIt){
-					if(NodeIt->mLeft[0] && (NodeIt->mLeft[0]->mAddress->mIP != settings.myip || NodeIt->mLeft[0]->mAddress->mPort != settings.myport)){
-						serialize_longlong(buff,&buffindex,NodeIt->mLeft[0]->mId);
-						break;
-					}else if(NodeIt->mRight[0] && (NodeIt->mRight[0]->mAddress->mIP != settings.myip || NodeIt->mRight[0]->mAddress->mPort != settings.myport)){
-						serialize_longlong(buff,&buffindex,NodeIt->mRight[0]->mId);
-						break;
-					}
-				}
-				if( NodeIt == NodeList.end()){
-					serialize_longlong(buff,&buffindex,0);
-				}
-			}else{
-				targetid=0;
-				serialize_longlong(buff,&buffindex,targetid);
-			}
+			
+			/*
+			  if(NodeList.size()>0){
+			  for(NodeIt = NodeList.begin(); NodeIt != NodeList.end(); ++NodeIt){
+			  if(NodeIt->mLeft[0] && (NodeIt->mLeft[0]->mAddress->mIP != settings.myip || NodeIt->mLeft[0]->mAddress->mPort != settings.myport)){
+			  serialize_longlong(buff,&buffindex,NodeIt->mLeft[0]->mId);
+			  break;
+			  }else if(NodeIt->mRight[0] && (NodeIt->mRight[0]->mAddress->mIP != settings.myip || NodeIt->mRight[0]->mAddress->mPort != settings.myport)){
+			  serialize_longlong(buff,&buffindex,NodeIt->mRight[0]->mId);
+			  break;
+			  }
+			  }
+			  if( NodeIt == NodeList.end()){
+			  serialize_longlong(buff,&buffindex,0);
+			  }
+			  }else{
+			//*/
+			targetid=0;
+			serialize_longlong(buff,&buffindex,targetid);
+			//}
 			buffindex += newnode->mKey.Serialize(&buff[buffindex]);
 			serialize_int(buff,&buffindex,settings.myip);
 			serialize_longlong(buff,&buffindex,newnode->mId);
@@ -442,10 +438,10 @@ int main_thread(int s){
 			assert(bufflen == buffindex && "buffsize ok");
 			
 			chklen = 0;
-			printf("addresses:%d\n",gAddressList.size());;
+			printf("address:%d\n",gAddressList.size());;
 			for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
 				printf("trying:%s\n",my_ntoa(AddressIt->mIP));
-				if(AddressIt->mIP == settings.myip && NodeList.empty()){++AddressIt; continue;}
+				if(AddressIt->mIP == settings.myip && AddressIt->mPort == settings.myip && NodeList.empty()){++AddressIt; continue;}
 				chklen = connect_send_close(AddressIt->mIP,AddressIt->mPort,buff,buffindex);//TreatOp
 				if(chklen > 0){
 					break;
@@ -456,18 +452,19 @@ int main_thread(int s){
 			}
 			
 			free(buff);
-			fprintf(stderr,"key:%d ,value:%d set in ID:%lld\n",tmpkey.mKey,tmpvalue.mValue,newnode->mId);
-			print_nodelist();
-			fprintf(stderr,"end of SetOP\n");
-			/*
-			  EndFlag = 1;
-			  DeleteFlag = 1;
-			*/
+			if(settings.verbose>0){
+				fprintf(stderr,"key:%d ,value:%d set in ID:%lld\n",tmpkey.mKey,tmpvalue.mValue,newnode->mId);
+				print_nodelist();
+				fprintf(stderr,"end of SetOP\n");
+			}
+			EndFlag = 1;
+			//DeleteFlag = 1;
 			break;
 		case TreatOp://targetid,key,originip,originid,originport
 			// if you are nearest to origin, connect origin in level 0
-			if(settings.verbose>1)
+			if(settings.verbose>1){
 				fprintf(stderr,"TreatOP\n");
+			}
 			
 			read(socket,&targetid,8);
 			tmpnode = search_node_by_id(targetid);
@@ -478,8 +475,8 @@ int main_thread(int s){
 			read(socket,&originport,2);
 			read(socket,&originvector,8);
 			
-			if(tmpkey == tmpnode->mKey && originip == settings.myip && originport == settings.myport && originvector == myVector.mVector){
-				
+			if(tmpkey == tmpnode->mKey && originip == settings.myip && originport == settings.myport && myVector.mVector == originvector ){
+				// if it is myself
 				buffindex = 0;
 				bufflen = 1+8+tmpnode->mKey.size()+4+8+2+8;
 				buff = (char*)malloc(bufflen);
@@ -511,7 +508,6 @@ int main_thread(int s){
 				}
 				free(buff); 
 			}
-			//fprintf(stderr,"node:%lld key:%d\n",targetid,tmpnode->mKey.mKey);
 			if(tmpkey == tmpnode->mKey){
 				if(settings.verbose>1)
 					fprintf(stderr,"tmpkey:%d\n",tmpkey.mKey);
@@ -534,7 +530,7 @@ int main_thread(int s){
 					left_or_right = Right;
 					for(;tmplevel>=0;tmplevel--){
 						if(!tmpnode->mRight[tmplevel]) continue;
-						if(tmpnode->mRight[tmplevel]->mKey < tmpkey){
+						if(!(tmpnode->mRight[tmplevel]->mKey > tmpkey)){
 							break;
 						}
 					}
@@ -546,7 +542,7 @@ int main_thread(int s){
 						if(tmpnode->mLeft[tmplevel]){
 							continue;
 						}
-						if(tmpnode->mLeft[tmplevel]->mKey > tmpkey){
+						if(!(tmpnode->mLeft[targetlevel]->mKey < tmpkey)){
 							break;
 						}
 					}
@@ -555,7 +551,7 @@ int main_thread(int s){
 					//start creating message and serialize
 					//send LinkOP
 					if(settings.verbose>1)
-						fprintf(stderr,"send TreatOP level:%d\n",tmplevel);
+						fprintf(stderr,"send TreatOP in level:%d\n",tmplevel);
 					
 					buffindex = 0;
 					bufflen = 1+8+tmpkey.size()+4+8+2+8;//[OP id key level ip id port]
@@ -590,12 +586,14 @@ int main_thread(int s){
 					bufflen = 1+8+tmpkey.size()+4+8+2+4+8;
 					buff = (char*)malloc(bufflen);
 					buff[buffindex++] = IntroduceOp;
-					if(left_or_right == Left && tmpnode->mLeft){
+					if(left_or_right == Left && tmpnode->mLeft[0]){
 						fprintf(stderr,"target ID:%lld\n",tmpnode->mLeft[0]->mId);
 						serialize_longlong(buff,&buffindex,tmpnode->mLeft[0]->mId);
-					}else{
+					}else if(left_or_right == Right && tmpnode->mRight[0]){
 						fprintf(stderr,"target ID:%lld\n",tmpnode->mRight[0]->mId);
 						serialize_longlong(buff,&buffindex,tmpnode->mRight[0]->mId);
+					}else{
+						fprintf(stderr,"could not treat %d\n",tmpkey.mKey);
 					}
 					buffindex += tmpkey.Serialize(&buff[buffindex]);
 					serialize_int(buff,&buffindex,originip);
@@ -623,6 +621,8 @@ int main_thread(int s){
 					free(buff);
 					
 					//LinkOp to new node
+					
+					//decide how much level to link
 					targetlevel = myVector.compare(originvector);
 					printf("vector1:%lld\nvector2:%lld\n%d bit equal\n",myVector.mVector,originvector,targetlevel);
 					bufflen = 1+8+tmpkey.size()+4+8+2+4+1;
