@@ -793,34 +793,7 @@ int main(int argc,char** argv){
 			fprintf(stderr,"send to %s:%d\n\n",inet_ntoa(tmp_inaddr),settings.targetport);
 			gAddressList.push_back(address(0,settings.targetip,settings.targetport));
 		}
-	}else{ // I am master
-		sg_Node* minnode;
-		sg_Node* maxnode;
-		minnode = new sg_Node(min,dummy);
-		maxnode = new sg_Node(max,dummy);
-		// create left&right end
-		
-		sg_neighbor<intkey> *minpointer,*maxpointer;
-		class address myAddress(0,settings.myip,settings.myport);
-		minpointer = new sg_neighbor<intkey>(0,min,&myAddress,minnode->mId);
-		maxpointer = new sg_neighbor<intkey>(0,max,&myAddress,maxnode->mId);
-		
-		for(int i=0;i<MAXLEVEL;i++){
-			minnode->mLeft[i] = NULL;
-			minnode->mRight[i] = maxpointer;
-			maxnode->mLeft[i] = minpointer;
-			maxnode->mRight[i] = NULL;
-		}
-		/*
-		  for(int i=0;i<MAXLEVEL;i++){
-		  fprintf(stderr,"%d:mLeft = %d  valid:%d\n",i,minnode.mLeft[i]->mKey.mKey,minnode.mLeft[i]->mValidFlag);
-		  }
-		*/
-		NodeList.push_back(*minnode);
-		NodeList.push_back(*maxnode);
-		delete minnode;
-		delete maxnode;
-		fprintf(stderr,"min:ID%lld  max:ID%lld level:%d\n",minnode->mId,maxnode->mId,MAXLEVEL);
+	}else{
 	}
 	print_nodelist();
 	// set accepting thread

@@ -4,23 +4,13 @@ OBJS = kttcp.o mytcplib.o mulio.o
 target:skipgraph
 target:tester
 
-tester:tester2.o mytcplib.o mulio.o
-	g++ tester2.o mytcplib.o mulio.o -o tester -pthread -lrt
-tester2.o:tester2.cpp
-	g++ tester2.cpp -o tester2.o -c $(OPTS)
-
-settest:settest.o mytcplib.o mulio.o
-	g++ settest.o mytcplib.o mulio.o -o settest -pthread -lrt
-settest.o:settest.cpp
-	g++ settest.cpp -o settest.o -c $(OPTS)
-
-searchtest:searchtest.o mytcplib.o mulio.o
-	g++ searchtest.o mytcplib.o mulio.o -o searchtest -pthread -lrt
-searchtest.o:searchtest.cpp
-	g++ searchtest.cpp -o searchtest.o -c $(OPTS)
+tester:tester.o mytcplib.o mulio.o
+	g++ tester.o mytcplib.o mulio.o -o tester -pthread -lrt $(OPTS)
+tester.o:tester.cpp skipgraph.h
+	g++ tester.cpp -o tester.o -c $(OPTS)
 
 skipgraph:skipgraph.o mytcplib.o mulio.o
-	g++ skipgraph.o mytcplib.o mulio.o -o skipgraph -pthread -lrt -g
+	g++ skipgraph.o mytcplib.o mulio.o -o skipgraph -pthread -lrt $(OPTS)
 
 skipgraph.o:skipgraph.cpp skipgraph.h
 	g++ skipgraph.cpp -o skipgraph.o -c $(OPTS)
