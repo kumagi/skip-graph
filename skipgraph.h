@@ -1,11 +1,13 @@
+#ifndef SKIPGRAPH
+#define SKIPGRAPH
 #define MAXLEVEL 8
 #include "mytcplib.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
-#include<vector>
-#include<list>
-#include<set>
+#include <vector>
+#include <list>
+#include <set>
 
 struct settings{
 	int myip;
@@ -14,34 +16,22 @@ struct settings{
 	unsigned short targetport;
 	int verbose;
 	int threads;
-}settings;
+} settings;
 const char keyop = 7;
 
 
 class address{
 public:
-	int mIP;
-	unsigned short mPort;
-	int mSocket;
+	const int mIP;
+	const unsigned short mPort;
+	const int mSocket;
 	int mCounter;
-	address(const int s,const int i,const unsigned short p){
-		mIP = i;
-		mPort = p;
-		mSocket = s;
+	address(const int s,const int i,const unsigned short p)
+		:mIP(i),mPort(p),mSocket(s)
+	{
 		mCounter = 1;
 	}
-	address(const address& ad){
-		mIP = ad.mIP;
-		mPort = ad.mPort;
-		mSocket = ad.mSocket;
-		mCounter = ad.mCounter;
-	}
-	address(void){
-		mIP = 0;
-		mPort = 0;
-		mSocket = 0;
-		mCounter = 0;
-	}
+	
 	~address(void){
 		if(mSocket!=0){
 			close(mSocket);
@@ -62,69 +52,53 @@ public:
 	bool operator==(const address& ad)const {
 		return (mIP==ad.mIP && mPort==ad.mPort);
 	}
-	
 };
 
 template<typename KeyType>
 class sg_neighbor{
 public:
-	KeyType mKey;
-	long long mId;
-	address* mAddress;
+	const KeyType mKey;
+	const long long mId;
+	const address* mAddress;
 	
 	int send(void* buff,int& bufflen){
 		assert(!"don't call this funcion\n");
 		return 0;
 	}
-	void set(const int socket,const KeyType& key,address* address,const long long id){
-		if(mAddress->mSocket != 0 && mAddress->mSocket != address->mSocket ){
-			mAddress->mCounter--;
-		}
-		mKey = key;
-		mId = id;
-		mAddress = address;
-		mAddress->mCounter++;
-	}
-	sg_neighbor(const int socket,const KeyType& key,address* ad,const long long id)
+	sg_neighbor(const KeyType& key,const address* ad,const long long id)
+		:mKey(key),mId(id),mAddress(ad)
 	{
-		mKey = key;
-		mId = id;
-		mAddress = ad;
 	}
-	sg_neighbor(const class sg_neighbor<KeyType>& ngn){
+	/*
+	sg_neighbor(const sg_neighbor<KeyType>& ngn)
+		:mAddress(ngn.ad)
+	{
 		mKey = ngn.mKey;
 		mId = ngn.mId;
-		mAddress = ngn.mAddress;
 	}
+	*/
 };
 
 long long gId = 0;
 template<typename KeyType, typename ValueType>
 class sg_node{
 public:
-	KeyType mKey;
-	ValueType mValue;
-	long long mId;
+	const KeyType mKey;
+	const ValueType mValue;
+	const long long mId;
 	sg_neighbor<KeyType>* mLeft[MAXLEVEL];
 	sg_neighbor<KeyType>* mRight[MAXLEVEL];
-	sg_node(){
-		mId = gId++;
-		for(int i=0;i<MAXLEVEL;i++){
-			mLeft[i] = NULL;
-			mRight[i] = NULL;
-		}
-	}
-	sg_node(const KeyType& k,const ValueType& v){
-		mKey = k;
-		mValue = v;
-		mId = gId++;
-		for(int i=0;i<MAXLEVEL;i++){
-			mLeft[i] = NULL;
-			mRight[i] = NULL;
-		}
-	}
 	
-	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const {
+	sg_node(const KeyType& k,const ValueType& v)
+		:mKey(k),mValue(v),mId(gId++)
+	{
+		for(int i=0;i<MAXLEVEL;i++){
+			mLeft[i] = NULL;
+			mRight[i] = NULL;
+		}
+	}
+	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const
+	{
 		return mKey < rightside.mKey;
 	}
 };
@@ -145,23 +119,23 @@ public :
 	}
 	void Maximize(void);
 	void Minimize(void);
-	int operator<(const intkey& rightside)
+	int operator<(const intkey& rightside) const 
 	{
 		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
 		return mKey<rightside.mKey;
 	}
-	int operator>(const intkey& rightside)
+	int operator>(const intkey& rightside) const
 	{
 		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
 		return mKey>rightside.mKey;
 	}
-	int operator==(const intkey rightside)
+	int operator==(const intkey& rightside) const
 	{
 		return mKey==rightside.mKey;
 	}
-	int size(void){return 4;}
+	int size(void) const {return 4;}
 };
-intkey::intkey(int k){
+intkey::intkey(const int k){
 	mKey = k;
 }
 void intkey::Maximize(void){
@@ -187,18 +161,13 @@ inline int intkey::Serialize(const void* buf) const
 class intvalue{
 public :
 	int mValue;
-	intvalue(void){};
+	intvalue(void) {mValue=0;};
 	intvalue(const int v);
-	void setValue(const int v);
 	int Receive(const int socket);
 	int Serialize(const void* buff)const;
-	int size(void){return 4;}
+	int size(void)const {return 4;}
 };
 intvalue::intvalue(const int v){
-	mValue = v;
-}
-inline void intvalue::setValue(const int v)
-{
 	mValue = v;
 }
 inline int intvalue::Receive(const int socket)
@@ -262,19 +231,22 @@ public:
 class membership_vector{
 public:
 	long long mVector;
-	bool getVector(int bit){
+	bool getVector(const int bit) const
+	{
 		return (mVector>>bit)&1;
 	}
-	bool operator[](int bit){
+	int operator[](const int bit) const
+	{
 		return getVector(bit);
 	}
 	
-	void printVector(void){
+	void printVector(void) const
+	{
 		unsigned int upper = (unsigned int)(mVector>>32);
 		printf("vector:%x%x\n",upper,(unsigned int)mVector);
 		printf("\n");
 	}
-	int compare(long long mv){
+	int compare(const long long mv) const{
 		int count = 0;
 		long long diff = mVector^mv;
 		while((diff&1)==0 && count<MAXLEVEL-1){
@@ -283,7 +255,8 @@ public:
 		}
 		return count;
 	}
-	void init(void){
+	void init(void)
+	{
 		mVector = rand64();
 	}
 	membership_vector(void){
@@ -319,3 +292,28 @@ inline void serialize_short(char* buff,int* offset,const short& data)
 	*pshort = data;
 	*offset += sizeof(short);
 }
+
+template<class KeyType>
+class neighbor_list
+{
+public:
+	typedef sg_neighbor<KeyType> neighbor;
+	
+	std::list<neighbor*> nList;
+	
+ 	neighbor* retrieve(const KeyType& key, const long long id, const address* ad)
+	{
+		typename std::list<neighbor*>::iterator it;
+		it = nList.begin();
+		 
+		while(it != nList.end()){
+			if((*it)->mKey == key && (*it)->mId == id && *(*it)->mAddress == *ad){
+			 	return *it;
+			}
+		}
+		nList.push_back(new neighbor(key,ad,id));
+		return nList.back();
+	}
+};
+
+#endif

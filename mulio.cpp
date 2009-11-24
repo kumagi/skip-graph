@@ -122,7 +122,7 @@ void mulio::eventloop(void){
 		printSocketList();
 		fprintf(stderr,"\n");
 		fprintf(stderr,"socket [ ");
-		for(int i=0;i<mActiveSocket.size();i++){
+		for(unsigned int i=0;i<mActiveSocket.size();i++){
 			fprintf(stderr,"%d ",mActiveSocket[i]);
 		}
 		fprintf(stderr,"] in que\n");
