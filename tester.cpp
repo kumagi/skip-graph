@@ -21,12 +21,12 @@
 #include "mytcplib.h"
 
 
-typedef sg_node<intkey,intvalue> sg_Node;
-typedef sg_neighbor<intkey> sg_Neighbor;
-typedef neighbor_list<intkey> neighbor_List;
+typedef sg_node<defkey,defvalue> sg_Node;
+typedef sg_neighbor<defkey> sg_Neighbor;
+typedef neighbor_list<defkey> neighbor_List;
 mulio mulio;
 membership_vector myVector;
-neighbor_list<intkey> gNeighborList;
+neighbor_list<defkey> gNeighborList;
 std::list<sg_Node> NodeList;
 std::list<class address> gAddressList;
 

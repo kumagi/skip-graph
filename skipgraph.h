@@ -10,9 +10,13 @@
 #include <list>
 #include <set>
 
+#define defkey intkey
+#define defvalue strvalue
+
 struct settings{
 	int myip;
 	unsigned short myport;
+	unsigned short memcacheport;
 	int targetip;
 	unsigned short targetport;
 	int verbose;
@@ -152,6 +156,29 @@ public:
 		memcpy(mKey,k,mLength);
 		mKey[mLength] = '\0';
 	}
+	strkey(int k){
+		mKey = (char*)malloc(11);
+		mLength = 0;
+		int tmpkey = k;
+		int caster = 1000000000;
+		char* pchar = mKey;
+		if(tmpkey<0) {
+			*pchar++ = '-';
+			tmpkey = -tmpkey;
+			mLength++;
+		}
+		while(tmpkey/caster == 0) {
+			caster /= 10;
+		}
+		while(tmpkey != 0){
+			*pchar++ = tmpkey/caster + '0';
+			mLength++;
+			tmpkey = tmpkey%caster;
+			caster /= 10;
+		}
+		*pchar = '\0';
+		
+	}
 	int Receive(const int socket){
 		if(mKey != NULL) {
 			free(mKey);
@@ -235,7 +262,9 @@ public:
 class intvalue : public AbstractValue{
 public :
 	int mValue;
-	intvalue(void) {mValue=0;};
+	intvalue(void) {
+		mValue=0;
+	}
 	intvalue(const int v){
 		mValue = v;
 	}
@@ -286,6 +315,28 @@ public:
 		memcpy(mValue,v,mLength);
 		mValue[mLength] = '\0';
 	}
+	strvalue(int v){
+		mValue = (char*)malloc(11);
+		mLength = 0;
+		int tmpvalue = v;
+		int caster = 1000000000;
+		char* pchar = mValue;
+		if(tmpvalue<0) {
+			*pchar++ = '-';
+			tmpvalue = -tmpvalue;
+			mLength++;
+		}
+		while(tmpvalue/caster == 0) {
+			caster /= 10;
+		}
+		while(tmpvalue != 0){
+			*pchar++ = tmpvalue/caster + '0';
+			mLength++;
+			tmpvalue = tmpvalue%caster;
+			caster /= 10;
+		}
+		*pchar = '\0';
+	}
 	int Receive(const int socket){
 		if(mValue != NULL) {
 			free(mValue);
@@ -305,6 +356,9 @@ public:
 		return mLength + 4;
 	}
 	const char* toString(void) const {
+		if(mLength==0){
+			return "";
+		}
 		return mValue;
 	}
 	int size(void) const {
@@ -353,7 +407,7 @@ public:
 		return mKey < rightside.mKey;
 	}
 };
-typedef sg_node<intkey,intvalue> sg_Node;
+typedef sg_node<defkey,defvalue> sg_Node;
 
 
 

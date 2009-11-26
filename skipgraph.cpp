@@ -22,11 +22,11 @@
 #include "mytcplib.h"
 
 
-typedef sg_neighbor<intkey> sg_Neighbor;
-typedef neighbor_list<intkey> neighbor_List;
-mulio mulio;
+typedef sg_neighbor<defkey> sg_Neighbor;
+typedef neighbor_list<defkey> neighbor_List;
+mulio mulio,memcached;
 membership_vector myVector;
-neighbor_list<intkey> gNeighborList;
+neighbor_list<defkey> gNeighborList;
 std::list<sg_Node*> NodeList;
 std::list<address> gAddressList;
 
@@ -175,8 +175,8 @@ int main_thread(const int s){
 	std::list<address>::iterator AddressIt;
 	address *targetaddress,*originaddress;
 	
-	intkey rKey;//received Key
-	intvalue rValue;//received Value
+	defkey rKey;//received Key
+	defvalue rValue;//received Value
 	
 	if(settings.verbose>1)
 		fprintf(stderr,"socket:%d ",socket);
@@ -331,14 +331,14 @@ int main_thread(const int s){
 		case FoundOp:
 			rKey.Receive(socket);
 			rValue.Receive(socket);
-			fprintf(stderr,"key:%d found!  value:%d\n",rKey.mKey,rValue.mValue);
+			fprintf(stderr,"key:%s found!  value:%s\n",rKey.toString(),rValue.toString());
 			EndFlag = 1;
 			break;
 		case NotfoundOp:
 			rKey.Receive(socket);
-			fprintf(stderr,"key:%d not found ! ",rKey.mKey);
+			fprintf(stderr,"key:%s not found ! ",rKey.toString());
 			rKey.Receive(socket);
-			fprintf(stderr,"nearest key:%d\n",rKey.mKey);
+			fprintf(stderr,"nearest key:%s\n",rKey.toString());
 			EndFlag = 1;
 			break;
 		case SetOp:
@@ -400,7 +400,7 @@ int main_thread(const int s){
 			}
 			
 			free(buff);
-			fprintf(stderr,"key:%d ,value:%d set in ID:%lld\n",rKey.mKey,rValue.mValue,newnode->mId);
+			fprintf(stderr,"key:%s ,value:%s set in ID:%lld\n",rKey.toString(),rValue.toString(),newnode->mId);
 			print_nodelist();
 			fprintf(stderr,"end of SetOP\n");
 			
@@ -713,8 +713,33 @@ int main_thread(const int s){
 	//*/
 	return DeleteFlag;
 }
+int memcached_thread(int socket){
+	char op[7];
+	int opoffset;
+	
+	fprintf(stderr,"hello\n");
+	write(socket,"hello",5);
+	opoffset = 0;
+	do{
+		opoffset += read(socket,op,3);
+	}while(opoffset == 3);
+	if(strncmp(op,"set",3) == 0){
+		fprintf(stderr,"set\n");
+	}else if(strncmp(op,"get",3) == 0){
+		fprintf(stderr,"get\n");
+	}
+	
+	
+	return 0;
+}
+
 void* worker(void* arg){
 	mulio.run();// accept thread
+	return NULL;
+}
+void* memcached_work(void* arg){
+	fprintf(stderr,"memcached thread start\n");
+	memcached.run();
 	return NULL;
 }
 
@@ -722,7 +747,7 @@ int main(int argc,char** argv){
 	srand(sysrand());
 	pthread_t* threads;
 	char c;
-	intkey min,max;
+	defkey min,max;
 	int myself;//loopback socket
 	int targetsocket;
 	address* myAddress;
@@ -732,14 +757,14 @@ int main(int argc,char** argv){
 	min.Minimize();
 	max.Maximize();
 	gAddressList.clear();
-	intvalue dummy(0xdeadbeef);
+	defvalue dummy(43);
 	
 	settings_init();
 	NodeList.clear();
 	myVector.init();
 	
 	// parse options
-	while ((c = getopt(argc, argv, "a:t:vPp:h")) != -1) {
+	while ((c = getopt(argc, argv, "a:t:m:vP:p:h")) != -1) {
 		switch (c) {
 		case 'a':// target addresss
 			settings.targetip = my_aton(optarg);
@@ -752,6 +777,9 @@ int main(int argc,char** argv){
 			break;
 		case 'p':
 			settings.targetport = atoi(optarg);
+			break;
+		case 'm':
+			settings.memcacheport = atoi(optarg);
 			break;
 		case 'P':
 			settings.myport = atoi(optarg);
@@ -808,6 +836,17 @@ int main(int argc,char** argv){
 	mulio.SetAcceptSocket(listening);
 	mulio.SetCallback(main_thread);
 	mulio.run();// accept thread
+	
+	int memcachesocket = create_tcpsocket();
+	set_reuse(memcachesocket);
+	bind_inaddr_any(memcachesocket,settings.memcacheport);
+	listen(memcachesocket,2048);
+	memcached.SetAcceptSocket(memcachesocket);
+	memcached.SetCallback(memcached_thread);
+	memcached.run();
+	pthread_t memcache_worker;
+	pthread_create(&memcache_worker,NULL,memcached_work,NULL);
+	
 	if(settings.targetip != 0){
 		connect_port_ip(targetsocket,settings.targetip,settings.targetport);
 		mulio.SetSocket(targetsocket);
@@ -832,7 +871,8 @@ int main(int argc,char** argv){
 
 void print_usage(void){
 	std::cout << "-a [xxx.xxx.xxx.xxx]:target IP" << std::endl;
-	std::cout << "-p [x]              :target port" << std::endl;
+	std::cout << "-p [x]              :target port. Default:10005" << std::endl;
+	std::cout << "-m [x]              :memcached port. Default:11211" << std::endl;
 	std::cout << "-t [x]              :number of threads" << std::endl;
 	std::cout << "-v                  :verbose mode" << std::endl;
 	std::cout << "-P [x]              :use port" << std::endl;
@@ -840,6 +880,7 @@ void print_usage(void){
 }
 void settings_init(void){
 	settings.myport = 10005;
+	settings.memcacheport = 11211;
 	settings.targetip = 0;
 	settings.targetport = 10005;
 	settings.verbose = 3;
