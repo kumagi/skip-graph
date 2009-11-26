@@ -43,7 +43,7 @@ int mulio::fds_set_all(fd_set* fds){
 	max = max > awaker[0] ? max : awaker[0];
 	return max;
 }
-void mulio::SetCallback(int (*cb)(int)){
+void mulio::SetCallback(int (*cb)(const int)){
 	callback = cb;
 }
 void mulio::SetAcceptSocket(const int socket){
@@ -57,6 +57,7 @@ void mulio::SetSocket(const int socket){
 	if( socket > mMaxFd ){
 		mMaxFd = socket;
 	}
+	printf("setsocket:%d\n",socket);
 	write(awaker[1],"",1);
 }
 void mulio::worker(void){
@@ -97,6 +98,7 @@ void mulio::worker(void){
 			int newsocket = accept(mAcceptSocket, (struct sockaddr*)&clientaddr, &addrlen);
 			mSocketList.insert(newsocket);
 			FD_SET( newsocket ,&fds );
+			//printf("newsocket:%d\n",newsocket);
 			if( mMaxFd < newsocket){
 				mMaxFd = newsocket;
 			}
@@ -117,7 +119,7 @@ void mulio::eventloop(void){
 	int socket,deleteflag;
 	while(1){
 		sem_wait(&sem_active);
-		//*
+		/*
 		fprintf(stderr,"All sockets ");
 		printSocketList();
 		fprintf(stderr,"\n");

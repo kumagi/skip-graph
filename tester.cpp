@@ -138,6 +138,7 @@ enum Op{
 	LinkOp,
 	TreatOp,
 	IntroduceOp,
+	ViewOp,
 };
 enum Left_Right{
 	Left,
@@ -764,6 +765,10 @@ int main_thread(int s){
 			fprintf(stderr,"end of Introduce Op\n");
 			EndFlag = 1;
 			break;
+		case ViewOp:
+			print_nodelist();
+			EndFlag = 1;
+			break;
 		default:
 			fprintf(stderr,"error: undefined operation %d.\n",op);
 		}
@@ -858,12 +863,14 @@ int main(int argc,char** argv){
 	
 	intkey key;
 	intvalue value;
-	char* buff;
+	char* buff,op;
 	int bufflen,buffindex,tmptargetlevel=MAXLEVEL-1;
 	long long tmpid=0;
+	int targetsocket = create_tcpsocket();
+	connect_port_ip(targetsocket,settings.targetip,settings.targetport);
 	while(1){
 		printf("command> ");
-		scanf("%s ",command);
+		scanf("%s",command);
 		if(strncmp("set",command,3)==0){
 			scanf("%d %d",&key.mKey,&value.mValue);
 			bufflen = 1 + key.size() + value.size();
@@ -875,9 +882,9 @@ int main(int argc,char** argv){
 			
 			assert(bufflen == buffindex && "buffsize ok");
 			
-			connect_send_close(settings.targetip,settings.myport,buff,buffindex);
+			write(targetsocket,buff,buffindex);
 			free(buff);
-			printf("send SendOp with key:%d value:%d\n",key.mKey,value.mValue);
+			printf("send SetOp with key:%d value:%d\n",key.mKey,value.mValue);
 		}else if(strncmp("search",command,4)==0){
 			scanf("%d",&key.mKey);
 			printf("try to %s %d\n",command,key.mKey);
@@ -896,11 +903,17 @@ int main(int argc,char** argv){
 			
 			assert(bufflen == buffindex && "buffsize ok");
 			
-			connect_send_close(settings.targetip,settings.myport,buff,buffindex);
+			write(targetsocket,buff,buffindex);
 			printf("send SerchOp with key:%d\n",key.mKey);
 			
 			free(buff);
-		} 
+		}else if(strncmp("view",command,4)==0){
+			fprintf(stderr,"send ViewOP\n");
+			op = ViewOp;
+			write(targetsocket,&op,1);
+		}else{
+			fprintf(stderr,"invalid operation\n");
+		}
 	}
 	mulio.eventloop();
 }

@@ -3,6 +3,7 @@
 #define MAXLEVEL 8
 #include "mytcplib.h"
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <vector>
@@ -54,29 +55,279 @@ public:
 	}
 };
 
+/* key */
+
+class AbstractKey {
+public:
+	virtual int Receive(const int socket) = 0;
+	virtual int Serialize(const void* buf) const = 0;
+	virtual ~AbstractKey(void){};
+	virtual bool isMaximum(void) const = 0;
+	virtual bool isMinimum(void) const = 0;
+	virtual void Maximize(void) = 0;
+	virtual void Minimize(void) = 0;
+	virtual int size(void) const = 0;
+	virtual const char* toString(void) const = 0;
+	// virtual operator<();
+	// virtual operator>();
+	// virtual operator==();
+};
+
+// key type: int
+class intkey : public AbstractKey{
+private:
+	//char buff[11];
+public :
+	int mKey;
+	intkey(){};
+	intkey(const int k){
+		mKey = k;
+	}
+	int Receive(const int socket){
+		int chklen;
+		chklen = read(socket,&mKey,4);
+		return chklen;
+	}
+	int Serialize(const void* buf) const{
+		int* target = (int*)buf;
+		*target = mKey;
+		return 4;
+	}
+	bool isMaximum(void) const {
+		return mKey == 0x7fffffff;
+	}
+	bool isMinimum(void) const {
+		return mKey == (int)0x80000000;
+	}
+	void Maximize(void){
+		mKey = 0x7fffffff;
+	}
+	void Minimize(void){
+		mKey = 0x80000000;
+	}
+	int size(void) const {return 4;}
+	const char* toString(void) const {
+		static char buff[11] = "";
+		int tmpkey = mKey;
+		int caster = 1000000000;
+		char* pchar = buff;
+		if(tmpkey<0) {
+			*pchar++ = '-';
+			tmpkey = -tmpkey;
+		}
+		while(tmpkey/caster == 0) {
+			caster /= 10;
+		}
+		while(tmpkey != 0){
+			*pchar++ = tmpkey/caster + '0';
+			tmpkey = tmpkey%caster;
+			caster /= 10;
+		}
+		*pchar = '\0';
+		return buff;
+	}
+	bool operator<(const intkey& rightside) const {
+		return mKey < rightside.mKey;
+	}
+	bool operator>(const intkey& rightside) const {
+		return mKey > rightside.mKey;
+	}
+	bool operator==(const intkey& rightside) const {
+		return mKey == rightside.mKey;
+	}
+};
+// key type: char[]
+class strkey : public AbstractKey{
+protected:
+	int mLength;
+public:
+	char *mKey;
+	strkey(){
+		mKey=NULL;
+		mLength=1;
+	}
+	strkey(char* k){
+		mLength = strlen(k);
+		mKey = (char*)malloc(mLength+1);
+		memcpy(mKey,k,mLength);
+		mKey[mLength] = '\0';
+	}
+	int Receive(const int socket){
+		if(mKey != NULL) {
+			free(mKey);
+		}
+		read(socket,&mLength,4);
+		mKey = (char*)malloc(mLength+1);
+		read(socket,mKey,mLength);
+		mKey[mLength] = '\0';
+		return mLength + 4;
+	}
+	int Serialize(const void* buf) const {
+		int* intptr = (int*)buf;
+		*intptr = mLength;
+		char* charptr = (char*)buf;
+		charptr += 4;
+		memcpy(charptr,mKey,mLength);
+		return mLength + 4;
+	}
+	void Maximize(void){
+		if(mKey != NULL){
+			free(mKey);
+		}
+		mKey = NULL;
+		mLength = 0;
+	}
+	void Minimize(void){
+		if(mKey != NULL){
+			free(mKey);
+		}
+		mKey = (char*)malloc(1);
+		*mKey = '\0';
+		mLength=1;
+	}
+	bool isMaximum(void) const {
+		return mLength == 0;
+	}
+	bool isMinimum(void) const {
+		return mKey == '\0' && mLength == 1;
+	}
+	int size(void)const{
+		return mLength;
+	}
+	const char* toString(void) const{
+		return mKey;
+	}
+	~strkey(void){
+		if(mKey != NULL){
+			free(mKey);
+		}
+	}
+	bool operator<(const strkey& right) const {
+		if(right.mLength == 0 && mLength > 0) {
+			return 1;
+		}else if(mLength == 0){
+			return 0;
+		}
+		return strcmp(mKey,right.mKey) < 0;
+	}
+	bool operator>(const strkey& right) const {
+		if(mLength == 0 && right.mLength > 0){
+			return 1;
+		}else if(right.mLength == 0){
+			return 0;
+		}
+		return strcmp(mKey,right.mKey) > 0;
+	}
+	bool operator==(const strkey& right) const{
+		return (mLength == right.mLength) && (strncmp(mKey,right.mKey,mLength) == 0); 
+	}
+};
+class AbstractValue{
+public:
+	virtual int Receive(const int socket) = 0;
+	virtual int Serialize(const void* buf) const = 0;
+	virtual int size(void) const = 0;
+	virtual const char* toString(void) const = 0;
+	virtual ~AbstractValue(void){};
+};
+
+// value type: int
+class intvalue : public AbstractValue{
+public :
+	int mValue;
+	intvalue(void) {mValue=0;};
+	intvalue(const int v){
+		mValue = v;
+	}
+	int Receive(const int socket){
+		int chklen;
+		chklen = read(socket,&mValue,4);
+		return chklen;
+	}
+	int Serialize(const void* buf)const {
+		int* target = (int*)buf;
+		*target = mValue;
+		return 4;
+	}
+	const char* toString(void) const {
+		static char buff[11] = "";
+		int tmpvalue = mValue;
+		int caster = 1000000000;
+		char* pchar = buff;
+		if(tmpvalue<0) {
+			*pchar++ = '-';
+			tmpvalue = -tmpvalue;
+		}
+		while(tmpvalue/caster == 0) {
+			caster /= 10;
+		}
+		while(tmpvalue != 0){
+			*pchar++ = tmpvalue/caster + '0';
+			tmpvalue = tmpvalue%caster;
+			caster /= 10;
+		}
+		*pchar = '\0';
+		return buff;		
+	}
+	int size(void)const {return 4;}
+};
+// value type: char[]
+class strvalue : public AbstractValue{
+public:
+	char* mValue;
+	int mLength;
+	strvalue(void) {
+		mValue = NULL;
+		mLength = 0;
+	}
+	strvalue(const char* v){
+		mLength = strlen(v);
+		mValue = (char*)malloc(mLength+1);
+		memcpy(mValue,v,mLength);
+		mValue[mLength] = '\0';
+	}
+	int Receive(const int socket){
+		if(mValue != NULL) {
+			free(mValue);
+		}
+		read(socket,&mLength,4);
+		mValue = (char*)malloc(mLength+1);
+		read(socket,mValue,mLength);
+		mValue[mLength] = '\0';
+		return mLength + 4;
+	}
+	int Serialize(const void* buf) const {
+		int* intptr = (int*)buf;
+		*intptr = mLength;
+		char* charptr = (char*)buf;
+		charptr += 4;
+		memcpy(charptr,mValue,mLength);
+		return mLength + 4;
+	}
+	const char* toString(void) const {
+		return mValue;
+	}
+	int size(void) const {
+		return mLength;
+	}
+};
+
 template<typename KeyType>
 class sg_neighbor{
 public:
 	const KeyType mKey;
 	const long long mId;
 	const address* mAddress;
+	bool mValid;
 	
 	int send(void* buff,int& bufflen){
 		assert(!"don't call this funcion\n");
 		return 0;
 	}
 	sg_neighbor(const KeyType& key,const address* ad,const long long id)
-		:mKey(key),mId(id),mAddress(ad)
-	{
+		:mKey(key),mId(id),mAddress(ad){
+		mValid=1;
 	}
-	/*
-	sg_neighbor(const sg_neighbor<KeyType>& ngn)
-		:mAddress(ngn.ad)
-	{
-		mKey = ngn.mKey;
-		mId = ngn.mId;
-	}
-	*/
 };
 
 long long gId = 0;
@@ -102,86 +353,7 @@ public:
 		return mKey < rightside.mKey;
 	}
 };
-
-// key type: int
-class intkey{
-public :
-	int mKey;
-	intkey(){};
-	intkey(int k);
-	int Receive(const int socket);//it returns received size
-	int Serialize(const void* buff)const;//it returns writed size
-	bool isMaximum(void){
-		return mKey == 0x7fffffff;
-	}
-	bool isMinimum(void){
-		return mKey == (int)0x80000000;
-	}
-	void Maximize(void);
-	void Minimize(void);
-	int operator<(const intkey& rightside) const 
-	{
-		//fprintf(stderr,"in operator :%d < %d ?\n",mKey,rightside.mKey);
-		return mKey<rightside.mKey;
-	}
-	int operator>(const intkey& rightside) const
-	{
-		//fprintf(stderr,"in operator :%d > %d ?\n",mKey,rightside.mKey);
-		return mKey>rightside.mKey;
-	}
-	int operator==(const intkey& rightside) const
-	{
-		return mKey==rightside.mKey;
-	}
-	int size(void) const {return 4;}
-};
-intkey::intkey(const int k){
-	mKey = k;
-}
-void intkey::Maximize(void){
-	mKey = 0x7fffffff;
-}
-void intkey::Minimize(void){
-	mKey = 0x80000000;
-}
-inline int intkey::Receive(const int socket)
-{
-	int chklen;
-	chklen = read(socket,&mKey,4);
-	return chklen;
-}
-inline int intkey::Serialize(const void* buf) const
-{
-	int* target = (int*)buf;
-	*target = mKey;
-	return 4;
-}
-
-/* value */
-class intvalue{
-public :
-	int mValue;
-	intvalue(void) {mValue=0;};
-	intvalue(const int v);
-	int Receive(const int socket);
-	int Serialize(const void* buff)const;
-	int size(void)const {return 4;}
-};
-intvalue::intvalue(const int v){
-	mValue = v;
-}
-inline int intvalue::Receive(const int socket)
-{
-	int chklen;
-	chklen = read(socket,&mValue,4);
-	return chklen;
-}
-inline int intvalue::Serialize(const void* buf)const
-{
-	int* target = (int*)buf;
-	*target = mValue;
-	return 4;
-}
+typedef sg_node<intkey,intvalue> sg_Node;
 
 
 
@@ -213,19 +385,26 @@ char* randstring(int length){// do free();
 }
 
 /* NodeList */
-/*
-templete<typename KeyType,typename ValueType>
+
 class node_list{
 public:
-	std::set<sg_node<KeyType,ValueType >*> mList; 
-	
-	// search by Key
-	
-	
-	// search by id
-	
+	std::list<sg_Node* > mNodeList; 
+	node_list(void){
+		mNodeList.clear();
 	}
-*/
+	~node_list(void){
+		mNodeList.clear();
+	}
+	void print(void) {
+		std::list<sg_Node*>::iterator it = mNodeList.begin();
+		while(it != mNodeList.end() ){
+			if((*it)->mLeft[0]){
+				printf("left:%s ",(*it)->mLeft[0]->mKey.toString());
+			}
+		}
+	}
+};
+
 
 /* membership_vector */
 class membership_vector{
@@ -310,6 +489,7 @@ public:
 			if((*it)->mKey == key && (*it)->mId == id && *(*it)->mAddress == *ad){
 			 	return *it;
 			}
+			++it;
 		}
 		nList.push_back(new neighbor(key,ad,id));
 		return nList.back();

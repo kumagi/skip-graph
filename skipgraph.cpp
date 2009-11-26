@@ -15,13 +15,13 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 
 #include <assert.h>//assert
 #include "mulio.h"
 #include "mytcplib.h"
 
 
-typedef sg_node<intkey,intvalue> sg_Node;
 typedef sg_neighbor<intkey> sg_Neighbor;
 typedef neighbor_list<intkey> neighbor_List;
 mulio mulio;
@@ -34,23 +34,18 @@ void print_nodelist(void){
 	std::list<sg_Node*>::iterator it = NodeList.begin();
 	while(it != NodeList.end() ){
 		//if((*it)->mId != (*it)->pPointer.mId){printf("not sanity\n");}
-		printf("%lld: key=%d  value=%x",(*it)->mId,(*it)->mKey.mKey,(*it)->mValue.mValue);
+		printf("%lld: key=%s  value=%s",(*it)->mId,(*it)->mKey.toString(),(*it)->mValue.toString());
 		if((*it)->mLeft[0]){
-			printf("  left=%d ",(*it)->mLeft[0]->mKey.mKey);
+			printf("  left=%s ",(*it)->mLeft[0]->mKey.toString());
 		}else{
 			printf("  left=no connect");
 		}
 		if((*it)->mRight[0]){
-			printf("  right=%d\n",(*it)->mRight[0]->mKey.mKey);
+			printf("  right=%s\n",(*it)->mRight[0]->mKey.toString());
 		}else{
 			printf("  right=no connect\n");
 		}
 		++it;
-		/*
-		  fprintf(stderr,"%lld: key:%d,value:%x :minnode->pointers[0]  left:%x  right:%x\n",it->mId,it->mKey.mKey,it->mValue.mValue,(unsigned int)(*it).mLeft[0],(unsigned int)it->mRight[0]);
-		  fprintf(stderr,"address mLeft diff:%d\n",(unsigned int)&it->mLeft[0]-(unsigned int)&*it);
-		  fprintf(stderr,"address mRight diff:%d\n",(unsigned int)&it->mRight[0]-(unsigned int)&*it);
-		*/
 	}
 }
 address* get_some_address(void){
@@ -73,8 +68,13 @@ address* search_from_addresslist(int ip,unsigned short port){
   return NULL;
 }
 address* add_new_address(const int socket,const int ip,const unsigned short port){
-	address* ad = new address(socket,port,ip);
+	address* ad = new address(socket,ip,port);
+	if(socket == 0){
+		printf("dont register the 0 socket\n");
+	}
 	gAddressList.push_back(*ad);
+	
+	fprintf(stderr,"new address %s:%d socket:%d\n",my_ntoa(ad->mIP),ad->mPort,ad->mSocket);
 	return ad;
 }
 	
@@ -138,6 +138,7 @@ enum Op{
 	LinkOp,
 	TreatOp,
 	IntroduceOp,
+	ViewOp,
 };
 enum Left_Right{
 	Left,
@@ -153,12 +154,12 @@ int send_to_address(const address* ad,const char* buff,const int bufflen){
 		fprintf(stderr,"send_to_address:failed to write %d\n",ad->mSocket);
 		exit(0);
 	}
-	return 0;
+	return sendsize;
 }
 
-int main_thread(int s){
+int main_thread(const int s){
 	// communication management
-	int socket = s,chklen;
+	int socket = s,chklen,newsocket;
 	char op;
 	
 	// buffer management
@@ -184,7 +185,8 @@ int main_thread(int s){
 	while(EndFlag == 0){
 		chklen = read(socket,&op,1);
 		if(chklen <= 0){
-			fprintf(stderr," closed %d\n",socket);
+			fprintf(stderr," closed %d",socket);
+			perror("  ");
 			close(socket);
 			for(AddressIt = gAddressList.begin(); AddressIt != gAddressList.end(); ++AddressIt){
 				if(AddressIt->mSocket == socket){
@@ -209,7 +211,7 @@ int main_thread(int s){
 			read(socket,&targetlevel,4);
 			read(socket,&targetip,4);
 			read(socket,&targetport,2); 
-			fprintf(stderr,"received searchkey:%d mykey:%d\n",rKey.mKey,targetnode->mKey.mKey);
+			fprintf(stderr,"received searchkey:%s mykey:%s\n",rKey.toString(),targetnode->mKey.toString());
 			
 			if(rKey == targetnode->mKey){
 				//send FoundOP
@@ -227,7 +229,7 @@ int main_thread(int s){
 				connect_send_close(targetip,targetport,buff,bufflen);
 				free(buff);
 			}else{
-				fprintf(stderr,"%d : %d ?\n",rKey.mKey, targetnode->mKey.mKey);
+				fprintf(stderr,"%s : %s ?\n",rKey.toString(), targetnode->mKey.toString());
 				if(rKey > targetnode->mKey){
 					//send SearchOP to Rightside
 					left_or_right = Right;
@@ -244,7 +246,7 @@ int main_thread(int s){
 					}
 				}
 				if(targetlevel >= 0){
-					// pass the message to next node
+					// passthe message to next node
 					//start creating message and serialize
 					buffindex = 0;
 					bufflen = 1+8+rKey.size()+4+4+2;//[OP id key level ip port]
@@ -322,13 +324,8 @@ int main_thread(int s){
 			}
 						
 			if(settings.verbose>1)
-				fprintf(stderr,"target:%d from:%d   targetlevel:%d",targetnode->mKey.mKey,rKey.mKey,targetlevel);
+				fprintf(stderr,"target:%s from:%s   targetlevel:%d\n",targetnode->mKey.toString(),rKey.toString(),targetlevel);
 			
-			if(left_or_right == Left){
-				fprintf(stderr,"  in left side\n");
-			}else{
-				fprintf(stderr,"  in right side\n");
-			}
 			EndFlag = 1;
 			break;
 		case FoundOp:
@@ -353,12 +350,12 @@ int main_thread(int s){
 			newnode = new sg_Node(rKey,rValue);
 			
 			//search the nearest neighbor or node from my list
+			/*  TODO  */
 			if(NodeList.size()>0){
 				targetnode=NodeList.front();
 			}else{
 				targetnode=NULL;
 			}
-			/*  TODO  */
 			
 			// Build up list with memvership vector
 			buffindex = 0;
@@ -386,9 +383,11 @@ int main_thread(int s){
 			
 			printf("addresses:%d\n",gAddressList.size());
 			for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
-				if(AddressIt->mIP == settings.myip && NodeList.empty()){++AddressIt; continue;}
+				if(AddressIt->mIP == settings.myip && NodeList.empty()){
+					continue;
+				}
 				fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
-				chklen = connect_send_close(AddressIt->mIP,AddressIt->mPort,buff,buffindex);//TreatOp
+				chklen = send_to_address(&*AddressIt,buff,bufflen);
 				if(chklen > 0){
 					fprintf(stderr,"ok\n");
 					break;
@@ -473,9 +472,13 @@ int main_thread(int s){
 					
 					if(left_or_right == Right){
 						send_to_address(targetnode->mRight[targetlevel]->mAddress,buff,bufflen);
+						fprintf(stderr,"TreatOP to address %s:%d socket:%d\n",my_ntoa(targetnode->mRight[targetlevel]->mAddress->mIP),targetnode->mRight[targetlevel]->mAddress->mPort,targetnode->mRight[targetlevel]->mAddress->mSocket);
 					}else{
 						send_to_address(targetnode->mLeft[targetlevel]->mAddress,buff,bufflen);
+						fprintf(stderr,"TreatOP to address %s:%d socket:%d\n",my_ntoa(targetnode->mLeft[targetlevel]->mAddress->mIP),targetnode->mLeft[targetlevel]->mAddress->mPort,targetnode->mLeft[targetlevel]->mAddress->mSocket);
 					}
+					
+					
 					free(buff);
 					EndFlag = 1;
 				}else{
@@ -497,7 +500,7 @@ int main_thread(int s){
 						fprintf(stderr,"target ID:%lld\n",targetnode->mRight[0]->mId);
 						serialize_longlong(buff,&buffindex,targetnode->mRight[0]->mId);
 					}else{
-						fprintf(stderr,"no node to introduce from %d\n",targetnode->mKey.mKey);
+						fprintf(stderr,"no node to introduce from %s\n",targetnode->mKey.toString());
 					}
 					
 					buffindex += rKey.Serialize(&buff[buffindex]);
@@ -515,9 +518,9 @@ int main_thread(int s){
 					}
 					if(settings.verbose>1){
 						if(left_or_right == Left){
-							fprintf(stderr,"sending introduceOp from %d to %d by socket:%d\n",targetnode->mKey.mKey,targetnode->mLeft[0]->mKey.mKey,targetnode->mLeft[0]->mAddress->mSocket);
+							fprintf(stderr,"sending introduceOp from %s to %s by socket:%d\n",targetnode->mKey.toString(),targetnode->mLeft[0]->mKey.toString(),targetnode->mLeft[0]->mAddress->mSocket);
 						}else if(left_or_right == Right){
-							fprintf(stderr,"sending introduceOp from %d to %d by socket:%d\n",targetnode->mKey.mKey,targetnode->mRight[0]->mKey.mKey,targetnode->mRight[0]->mAddress->mSocket);
+							fprintf(stderr,"sending introduceOp from %s to %s by socket:%d\n",targetnode->mKey.toString(),targetnode->mRight[0]->mKey.toString(),targetnode->mRight[0]->mAddress->mSocket);
 						}
 					}
 					free(buff);
@@ -526,7 +529,7 @@ int main_thread(int s){
 					
 					//decide how much level to link
 					targetlevel = myVector.compare(originvector);
-					printf("vector1:%lld\nvector2:%lld\n%d bit equal\n",myVector.mVector,originvector,targetlevel);
+					fprintf(stderr,"vector1:%llx\nvector2:%llx\n%d bit equal\n",myVector.mVector,originvector,targetlevel);
 					bufflen = 1+8+rKey.size()+4+8+2+4+1;
 					buff = (char*)malloc(bufflen);
 					buffindex = 0;
@@ -540,9 +543,12 @@ int main_thread(int s){
 					
 					targetaddress = search_from_addresslist(originip,originport);
 					if(targetaddress == NULL){
-						targetaddress = add_new_address(socket,originip,originport);
-						mulio.SetSocket(socket);
+						newsocket = create_tcpsocket();
+						connect_port_ip(newsocket,originip,originport);
+						targetaddress = add_new_address(newsocket,originip,originport);
+						mulio.SetSocket(newsocket);
 					}
+					fprintf(stderr,"LinkOP to address %s:%d socket:%d\n",my_ntoa(targetaddress->mIP),targetaddress->mPort,targetaddress->mSocket);
 					
 					for(int i=0;i<=targetlevel;i++){
 						serialize_int(buff,&buffindex,i);
@@ -556,7 +562,7 @@ int main_thread(int s){
 							targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
 						}
 						if(settings.verbose>1){
-							fprintf(stderr,"Link from %d to %d at level %d\n",targetnode->mKey.mKey,rKey.mKey,i);
+							fprintf(stderr,"Link from %s to %s at level %d\n",targetnode->mKey.toString(),rKey.toString(),i);
 						}
 					}
 					free(buff);
@@ -566,7 +572,7 @@ int main_thread(int s){
 						if((left_or_right == Left && targetnode->mRight[targetlevel] != NULL) ||
 						   (left_or_right == Right && targetnode->mLeft[targetlevel] != NULL)){
 							buffindex = 0;
-							bufflen = 1+8+rKey.size()+4+8+2+4+8;
+							bufflen = 1+8+rKey.size()+4+8+2+4+8; // OP ID Key fromIP fromID fromPort level fromVector
 							buff = (char*)malloc(bufflen);
 							//serialize
 							buff[buffindex++] = IntroduceOp;
@@ -577,7 +583,7 @@ int main_thread(int s){
 							serialize_short(buff,&buffindex,originport);
 							serialize_int(buff,&buffindex,targetlevel);
 							serialize_longlong(buff,&buffindex,originvector);
-	    
+							
 							if(left_or_right == Left && targetnode->mRight[targetlevel]){
 								send_to_address(targetnode->mRight[targetlevel]->mAddress,buff,bufflen);
 							}else if(left_or_right == Right && targetnode->mLeft[targetlevel]){
@@ -598,7 +604,11 @@ int main_thread(int s){
 			
 			read(socket,&targetid,8);
 			targetnode = search_node_by_id(targetid);
-			fprintf(stderr,"found %lld key:%d\n",targetnode->mId,targetnode->mKey.mKey);
+			if(targetnode == NULL){
+				fprintf(stderr,"there is no node such ID:%lld\n",targetid);
+				break;
+			}
+			fprintf(stderr,"found %lld key:%s\n",targetnode->mId,targetnode->mKey.toString());
 			
 			rKey.Receive(socket);
 			read(socket,&originip,4);
@@ -629,8 +639,10 @@ int main_thread(int s){
 			
 			targetaddress = search_from_addresslist(originip,originport);
 			if(targetaddress == NULL){
-				targetaddress = add_new_address(socket,originip,originport);
-				mulio.SetSocket(socket);
+				newsocket = create_tcpsocket();
+				connect_port_ip(newsocket,originip,originport);
+				targetaddress = add_new_address(newsocket,originip,originport);
+				mulio.SetSocket(newsocket);
 			}
 			for(int i=originlevel;i<=targetlevel;i++){
 				serialize_int(buff,&buffindex,i);
@@ -643,10 +655,10 @@ int main_thread(int s){
 				}else{
 					targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
 				}
-				printf("Link from %d to %d at level %d in socket:%d\n",targetnode->mKey.mKey,rKey.mKey,i,socket);
+				printf("Link from %s to %s at level %d in socket:%d\n",targetnode->mKey.toString(),rKey.toString(),i,targetaddress->mSocket);
 			}
 			free(buff);
-					
+			
 			targetlevel++;
 			if(targetlevel < MAXLEVEL){
 				if((left_or_right == Left && targetnode->mRight[targetlevel] != NULL) ||
@@ -656,23 +668,39 @@ int main_thread(int s){
 					buff = (char*)malloc(bufflen);
 					//serialize
 					buff[buffindex++] = IntroduceOp;
-					serialize_longlong(buff,&buffindex,originid);
+					if(left_or_right == Left && targetnode->mRight[targetlevel]){
+						serialize_longlong(buff,&buffindex,targetnode->mRight[targetlevel]->mId);
+					}else if(left_or_right == Right && targetnode->mLeft[targetlevel]){
+						serialize_longlong(buff,&buffindex,targetnode->mLeft[targetlevel]->mId);
+					}
 					buffindex += rKey.Serialize(&buff[buffindex]);
 					serialize_int(buff,&buffindex,originip);
 					serialize_longlong(buff,&buffindex,originid);
 					serialize_short(buff,&buffindex,originport);
 					serialize_int(buff,&buffindex,targetlevel);
 					serialize_longlong(buff,&buffindex,originvector);
-				
+					
 					if(left_or_right == Left && targetnode->mRight[targetlevel]){
 						send_to_address(targetnode->mRight[targetlevel]->mAddress,buff,bufflen);
 					}else if(left_or_right == Right && targetnode->mLeft[targetlevel]){
 						send_to_address(targetnode->mLeft[targetlevel]->mAddress,buff,bufflen);
 					}
 					free(buff);
+					if(left_or_right == Left && targetnode->mRight[targetlevel]){
+						fprintf(stderr,"relay IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->mKey.toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
+					}else if(left_or_right == Right && targetnode->mLeft[targetlevel]){
+						fprintf(stderr,"relay IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->mKey.toString(),targetnode->mLeft[targetlevel]->mKey.toString(),targetlevel,targetnode->mLeft[targetlevel]->mAddress->mSocket);
+					}else{
+						fprintf(stderr,"end of relay\n");
+					}
 				}
 			}
 			fprintf(stderr,"end of Introduce Op\n");
+			EndFlag = 1;
+			break;
+		case ViewOp:
+			fprintf(stderr,"view\n");
+			print_nodelist();
 			EndFlag = 1;
 			break;
 		default:
@@ -685,127 +713,135 @@ int main_thread(int s){
 	//*/
 	return DeleteFlag;
 }
-	void* worker(void* arg){
-		mulio.run();// accept thread
-		return NULL;
-	}
+void* worker(void* arg){
+	mulio.run();// accept thread
+	return NULL;
+}
 
-	int main(int argc,char** argv){
-		srand(sysrand());
-		pthread_t* threads;
-		char c;
-		intkey min,max;
+int main(int argc,char** argv){
+	srand(sysrand());
+	pthread_t* threads;
+	char c;
+	intkey min,max;
+	int myself;//loopback socket
+	int targetsocket;
+	address* myAddress;
+	address* newAddress;
 	
-		//initialize
-		min.Minimize();
-		max.Maximize();
-		gAddressList.clear();
-		intvalue dummy(0xdeadbeef);
+	//initialize
+	min.Minimize();
+	max.Maximize();
+	gAddressList.clear();
+	intvalue dummy(0xdeadbeef);
 	
-		settings_init();
-		NodeList.clear();
-		myVector.init();
+	settings_init();
+	NodeList.clear();
+	myVector.init();
 	
-		// parse options
-		while ((c = getopt(argc, argv, "a:t:vPp:h")) != -1) {
-			switch (c) {
-			case 'a':// target addresss
-				settings.targetip = my_aton(optarg);
-				break;
-			case 't'://number of threads
-				settings.threads = atoi(optarg);
-				break;
-			case 'v':
-				settings.verbose++;
-				break;
-			case 'p':
-				settings.targetport = atoi(optarg);
-				break;
-			case 'P':
-				settings.myport = atoi(optarg);
-				break;
-			case 'h':
-				print_usage();
-				exit(0);
-				break;
-			}
+	// parse options
+	while ((c = getopt(argc, argv, "a:t:vPp:h")) != -1) {
+		switch (c) {
+		case 'a':// target addresss
+			settings.targetip = my_aton(optarg);
+			break;
+		case 't'://number of threads
+			settings.threads = atoi(optarg);
+			break;
+		case 'v':
+			settings.verbose++;
+			break;
+		case 'p':
+			settings.targetport = atoi(optarg);
+			break;
+		case 'P':
+			settings.myport = atoi(optarg);
+			break;
+		case 'h':
+			print_usage();
+			exit(0);
+			break;
 		}
-		settings.myip = chk_myip();
-	
-	
-		// set myself
-		gAddressList.push_back( address(0,settings.myip, settings.myport) );
-		if(settings.targetip != 0){ // join to the skip graph
-			if(settings.verbose>1){
-				struct in_addr tmp_inaddr;
-				tmp_inaddr.s_addr=settings.targetip;
-				fprintf(stderr,"send to %s:%d\n\n",inet_ntoa(tmp_inaddr),settings.targetport);
-				gAddressList.push_back(address(0,settings.targetip,settings.targetport));
-			}
-		}else{ // I am master
-			sg_Node* minnode;
-			sg_Node* maxnode;
-			minnode = new sg_Node(min,dummy);
-			maxnode = new sg_Node(max,dummy);
-			// create left&right end
-		
-			sg_neighbor<intkey> *minpointer,*maxpointer;
-			class address myAddress(0,settings.myip,settings.myport);
-			minpointer = new sg_Neighbor(min,&myAddress,minnode->mId);
-			maxpointer = new sg_Neighbor(max,&myAddress,maxnode->mId);
-		
-			for(int i=0;i<MAXLEVEL;i++){
-				minnode->mLeft[i] = NULL;
-				minnode->mRight[i] = maxpointer;
-				maxnode->mLeft[i] = minpointer;
-				maxnode->mRight[i] = NULL;
-			}
-			/*
-			  for(int i=0;i<MAXLEVEL;i++){
-			  fprintf(stderr,"%d:mLeft = %d  valid:%d\n",i,minnode.mLeft[i]->mKey.mKey,minnode.mLeft[i]->mValidFlag);
-			  }
-			*/
-			NodeList.push_back(minnode);
-			NodeList.push_back(maxnode);
-		
-			fprintf(stderr,"min:ID%lld  max:ID%lld level:%d\n",minnode->mId,maxnode->mId,MAXLEVEL);
-		}
-		print_nodelist();
-		// set accepting thread
-		int listening = create_tcpsocket();
-		set_reuse(listening);
-		bind_inaddr_any(listening,settings.myport);
-		listen(listening,2048);
-		mulio.SetAcceptSocket(listening);
-		mulio.SetCallback(main_thread);
-		mulio.run();// accept thread
-	
-		threads = (pthread_t*)malloc((settings.threads-1)*sizeof(pthread_t));
-		for(int i=0;i<settings.threads-1;i++){
-			pthread_create(&threads[i],NULL,worker,NULL);
-		}
-		if(settings.verbose>1){
-			printf("start warking as skipgraph server...\n");
-			printf("myIP:%s myport:%d\ntargetIP:%s targetport:%d\nverbose:%d\nthreads:%d\nVector:%lld\n\n",
-				   my_ntoa(settings.myip),settings.myport,my_ntoa(settings.targetip),settings.targetport,
-				   settings.verbose,settings.threads,myVector.mVector);
-		}
-	
-		mulio.eventloop();
 	}
+	settings.myip = chk_myip();
+	
+	
+	// set myself
+	if(settings.targetip != 0){ // join to the skip graph
+		fprintf(stderr,"send to %s:%d\n\n",my_ntoa(settings.targetip),settings.targetport);
+		targetsocket = create_tcpsocket();
+		newAddress = new address(targetsocket,settings.targetip,settings.targetport);
+		gAddressList.push_back(*newAddress);
+	}else{ // I am master
+		sg_Node* minnode;
+		sg_Node* maxnode;
+		
+		minnode = new sg_Node(min,dummy);
+		maxnode = new sg_Node(max,dummy);
+		// create left&right end
+		
+		sg_Neighbor *minpointer,*maxpointer;
+		
+		myself = create_tcpsocket();
+		printf("loopback socket:%d\n",myself);
+		myAddress = new address(myself,settings.myip,settings.myport);
+		minpointer = new sg_Neighbor(min,myAddress,minnode->mId);
+		maxpointer = new sg_Neighbor(max,myAddress,maxnode->mId);
+		gAddressList.push_back( *myAddress );
+		
+		for(int i=0;i<MAXLEVEL;i++){
+			minnode->mLeft[i] = NULL;
+			minnode->mRight[i] = maxpointer;
+			maxnode->mLeft[i] = minpointer;
+			maxnode->mRight[i] = NULL;
+		}
+		NodeList.push_back(minnode);
+		NodeList.push_back(maxnode);
+		
+		fprintf(stderr,"min:ID%lld  max:ID%lld level:%d\n",minnode->mId,maxnode->mId,MAXLEVEL);
+	}
+	print_nodelist();
+	// set accepting thread
+	int listening = create_tcpsocket();
+	set_reuse(listening);
+	bind_inaddr_any(listening,settings.myport);
+	listen(listening,2048);
+	mulio.SetAcceptSocket(listening);
+	mulio.SetCallback(main_thread);
+	mulio.run();// accept thread
+	if(settings.targetip != 0){
+		connect_port_ip(targetsocket,settings.targetip,settings.targetport);
+		mulio.SetSocket(targetsocket);
+	}else{
+		connect_port_ip(myself,settings.myip,settings.myport);
+		mulio.SetSocket(myself);
+	}
+	
+	threads = (pthread_t*)malloc((settings.threads-1)*sizeof(pthread_t));
+	for(int i=0;i<settings.threads-1;i++){
+		//pthread_create(&threads[i],NULL,worker,NULL);
+	}
+	if(settings.verbose>1){
+		printf("start warking as skipgraph server...\n");
+		printf("myIP:%s myport:%d\ntargetIP:%s targetport:%d\nverbose:%d\nthreads:%d\nVector:%llx\n\n",
+			   my_ntoa(settings.myip),settings.myport,my_ntoa(settings.targetip),settings.targetport,
+			   settings.verbose,settings.threads,myVector.mVector);
+	}
+	
+	mulio.eventloop();
+}
 
-	void print_usage(void){
-		std::cout << "-a [xxx.xxx.xxx.xxx]:target IP" << std::endl;
-		std::cout << "-p [x]              :target port" << std::endl;
-		std::cout << "-t [x]              :number of threads" << std::endl;
-		std::cout << "-v                  :verbose mode" << std::endl;
-		std::cout << "-P [x]              :use port" << std::endl;
-		std::cout << "-h                  :print this message" << std::endl;
-	}
-	void settings_init(void){
-		settings.myport = 10005;
-		settings.targetip = 0;
-		settings.targetport = 10005;
-		settings.verbose = 3;
-		settings.threads = 4;
-	}
+void print_usage(void){
+	std::cout << "-a [xxx.xxx.xxx.xxx]:target IP" << std::endl;
+	std::cout << "-p [x]              :target port" << std::endl;
+	std::cout << "-t [x]              :number of threads" << std::endl;
+	std::cout << "-v                  :verbose mode" << std::endl;
+	std::cout << "-P [x]              :use port" << std::endl;
+	std::cout << "-h                  :print this message" << std::endl;
+}
+void settings_init(void){
+	settings.myport = 10005;
+	settings.targetip = 0;
+	settings.targetport = 10005;
+	settings.verbose = 3;
+	settings.threads = 4;
+}
