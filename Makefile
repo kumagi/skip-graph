@@ -2,7 +2,7 @@ OPTS = -Wall -O0
 OBJS = kttcp.o mytcplib.o mulio.o 
 
 target:skipgraph
-target:tester
+#target:tester
 
 tester:tester.o mytcplib.o mulio.o
 	g++ tester.o mytcplib.o mulio.o -o tester -pthread -lrt $(OPTS)
