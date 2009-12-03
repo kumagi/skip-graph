@@ -112,12 +112,14 @@ public :
 	int size(void) const {return 4;}
 	const char* toString(void) const {
 		static char buff[11] = "";
-		int tmpkey = mKey;
+		unsigned int tmpkey;
 		int caster = 1000000000;
 		char* pchar = buff;
-		if(tmpkey<0) {
+		if(mKey<0) {
 			*pchar++ = '-';
-			tmpkey = -tmpkey;
+			tmpkey = -mKey;
+		}else{
+			tmpkey = mKey;
 		}
 		while(tmpkey/caster == 0) {
 			caster /= 10;

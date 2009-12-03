@@ -6,6 +6,7 @@
 
 #include <list>
 #include <set>
+#include <map>
 #include <vector>
 
 #include <deque>
@@ -20,6 +21,7 @@
 
 #include <assert.h>//assert
 #include "mulio.h"
+#include "memcache_buffer.h"
 #include "mytcplib.h"
 
 
@@ -716,214 +718,57 @@ int main_thread(const int s){
 }
 
 
-int natoi(char* str,int length){
-	int ans = 0;
-	while(length > 0){
-		assert('0' <= *str && *str <= '9' );
-		ans = ans * 10 + *str - '0';
-		str++;
-	}
-	return ans;
-}
 
-enum memcached_buffer_constants{
-	TOKENMAX = 8,
-	SET_KEY = 0,
-	SET_FLAGS = 1,
-	SET_EXPTIME = 2,
-	SET_LENGTH = 3,
-	SET_VALUE = 4,
-	GET_KEY = 0,
-	DELETE_KEY = 0,
-};
-class memcached_buffer{
-private:
-	const int mSocket;
-	int mState;
-	char* mBuff;
-	int mSize;
-	int mStart;
-	int mChecked;
-	int mRead;
-	int mReft;
+/*
+	TOKENMAX,
+	SET_KEY,
+	SET_FLAGS,
+	SET_EXPTIME,
+	SET_LENGTH,
+	SET_VALUE,
+	GET_KEY,
+	DELETE_KEY,
 	
-	int moreread;
-public:
-	enum state {
-		state_free,
-		state_set,
-		state_get,
-		state_delete,
-		state_value, // wait until n byte receive
-		state_continue, // not all data received
-		state_close,
-		state_error,
-	};
-	struct token{
-		char* str;
-		int length;
-	} tokens[TOKENMAX];
-	int tokenmax;
-	
-	void nextParse(void){
-		mState = state_free;
-		if(mChecked == mRead){
-			if(mSize > 128){
-				mBuff = (char*)realloc((void*)mBuff,128);
-			}
-			mChecked = mRead = mStart = 0;
-			mSize = mReft = 128;
-			mState = state_free;
-		}
-	}
-	
-	memcached_buffer(const int socket):mSocket(socket){
-		mSize = 128; // buffer size
-		mStart = 0; // head of parse
-		mRead = 0; // received data
-		mChecked = 0; // checked data
-		mReft = mSize; // reft buffer
-		mBuff = (char*)malloc(mSize);
-	}
-	const int& getState(void) const{
-		return mState;
-	}
-	const int& getSocket(void) const{
-		return mSocket;
-	}
-	void receive(void){
-		int newread;
-		switch(mState){
-		case state_free:
-			mStart = mChecked;
-		case state_continue:
-			do{
-				if(mReft==0){
-					mBuff=(char*)realloc(mBuff,mSize*2);
-					mReft = mSize;
-					mSize *= 2;
-				}
-				newread = recv(mSocket,&mBuff[mRead],mReft,MSG_DONTWAIT);
-				if(newread == 0){
-					mState = state_close;
-				}
-				mRead += newread;
-				mReft -= newread;
-			}while(errno!=EAGAIN && errno!=EWOULDBLOCK);
-			while(mBuff[mChecked] != '\n' && mChecked < mRead){
-				mChecked++;
-			}
-			if(mChecked == mRead){
-				mState = state_continue;
-				return;
-			}
-			mBuff[mChecked] = '\0';
-			//mBuff[mStart ~ mChecked] <- command is in this range.
-			parse(&mBuff[mStart],&mBuff[mChecked-1]);
-			mStart = mChecked + 1;
-			break;
-		case state_value:
-			do{
-				if(mReft < moreread){
-					mBuff=(char*)realloc(mBuff,mSize*2);
-					mReft = mSize;
-					mSize *= 2;
-				}
-				newread = recv(mSocket,&mBuff[mRead],mReft,MSG_DONTWAIT);
-				mRead += newread;
-				mReft -= newread;
-			}while(errno!=EAGAIN && errno!=EWOULDBLOCK);
-			if (mRead - mStart < moreread){
-				return;
-			}
-			mChecked += moreread;
-			tokens[SET_VALUE].str = &mBuff[mStart];
-			tokens[SET_VALUE].length = moreread;
-			mStart += moreread;
-			mState = state_set;
-			break;
-		}
-	}
-	bool operator<(const memcached_buffer& rightside) const{
-		return mSocket < rightside.mSocket;
-	}
-private:
-	inline void parse(char* start,char* end){
-		int cnt;
-		assert(start < end);
-		if(strncmp(start,"set ",4)){ // set [key] <flags> <exptime> <length>
-			mState = state_value;
-			start += 3;
-			for(int i=0; i<4; i++){
-				while(*start == ' ' && *start != '\0') {
-					start++;
-				}
-				tokens[i].str = start;
-				cnt = 0;
-				while(start < end && *start != ' ' && *start != '\0'){
-					start++;
-					cnt++;
-				}
-				tokens[i].length = cnt;
-			}
-			moreread = natoi(tokens[SET_LENGTH].str,tokens[SET_LENGTH].length);
-		}else if(strncmp(start,"get ",4)){ // get [key] ([key] ([key] ([key].......)))
-			mState = state_get;
-			start += 3;
-			for(int i=0; i<8; i++){
-				while(*start == ' ' && *start != '\0') {
-					start++;
-				}
-				tokens[i].str = start;
-				cnt = 0;
-				while(start < end && *start != ' ' && *start != '\0'){
-					start++;
-					cnt++;
-				}
-				tokens[i].length = cnt;
-			}
-		}else if(strncmp(start,"delete ",7)){ // delete [key] ([key] ([key] ([key].......)))
-			mState = state_delete;
-			start += 6;
-			for(int i=0; i<8; i++){
-				while(*start == ' ' && *start != '\0') {
-					start++;
-				}
-				tokens[i].str = start;
-				cnt = 0;
-				while(start < end && *start != ' ' && *start != '\0'){
-					start++;
-					cnt++;
-				}
-				tokens[i].length = cnt;
-			}
-		}else{
-			assert(!"invalid operation\n");
-		}
-	}
-};
+	state_free,
+	state_set,
+	state_get,
+	state_delete,
+	state_value, // wait until n byte receive
+	state_continue, // not all data received
+	state_close,
+	state_error,
+*/
+
+std::map<int,memcache_buffer> gMemcachedSockets;
 
 int memcached_thread(int socket){
-	char op[7];
-	int opoffset;
-	char buff[32];
+	std::map<int,memcache_buffer>::iterator bufferIt;
+	memcache_buffer* buf;
 	
-	fprintf(stderr,"hello\n");
-	write(socket,"hello",5);
-	opoffset = 0;
-	do{
-		opoffset += read(socket,op,3);
-		op[3] = '\0';
-		fprintf(stderr,"%s\n",op);
-	}while(opoffset == 3);
-	if(strncmp(op,"set",3) == 0){
-		read(socket,buff,1);
-		fprintf(stderr,"set\n");
-	}else if(strncmp(op,"get",3) == 0){
-		fprintf(stderr,"get\n");
+	fprintf(stderr,"hello!\n");
+	bufferIt = gMemcachedSockets.find(socket);
+	if(bufferIt == gMemcachedSockets.end()){
+		buf = new memcache_buffer(socket);
+		gMemcachedSockets.insert(std::pair<int,memcache_buffer>(socket,*buf));
+	}else {
+		buf = &bufferIt->second;
 	}
-	
-	
+	fprintf(stderr,"called socket:%d\n",socket);
+	buf->receive();
+	switch(buf->getState()){
+	case memcache_buffer::state_set:
+		fprintf(stderr,"set!!\n");
+		break;
+	case memcache_buffer::state_get:
+		fprintf(stderr,"get!!\n");
+		break;
+	case memcache_buffer::state_delete:
+		fprintf(stderr,"delete!!\n");
+		break;
+	case memcache_buffer::state_error:
+		fprintf(stderr,"error!!\n");
+		break;
+	}
 	return 0;
 }
 
