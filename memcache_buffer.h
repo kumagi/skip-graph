@@ -20,10 +20,10 @@ private:
 	int mChecked;
 	int mRead;
 	int mReft;
-	
+	int mCloseflag;
 	int moreread;
 public:
-	enum state {
+ 	enum state {
 		state_free,
 		state_set,
 		state_get,
@@ -40,6 +40,7 @@ public:
 	int tokenmax;
 	
 	memcache_buffer(int socket);
+	~memcache_buffer(void);
 	
 	void ParseOK(void);
 	
@@ -51,8 +52,9 @@ public:
 private:
 	void readmax(void);
 	inline void string_write(char* string) const;
-	inline void parse(char* start,char* end);
+	inline void parse(char* start);
 	int read_tokens(char* str,int maxtokens);
+	void init_buffer(void);
 };
 
 int natoi(char* str,int length);

@@ -24,6 +24,11 @@
 #include "memcache_buffer.h"
 #include "mytcplib.h"
 
+#define DEBUG
+#ifdef DEBUG
+//void* patient;
+#endif
+
 
 typedef sg_neighbor<defkey> sg_Neighbor;
 typedef neighbor_list<defkey> neighbor_List;
@@ -204,7 +209,7 @@ int main_thread(const int s){
 		switch(op){
 		case SearchOp:
 			if(settings.verbose>1){
-				fprintf(stderr,"Search\n");
+				fprintf(stderr,"Search op\n");
 			}
 			read(socket,&targetid,8);
 			targetnode = search_node_by_id(targetid);
@@ -303,10 +308,11 @@ int main_thread(const int s){
 			break;
 		case LinkOp://id,key,originip,originid,originport,level,LorR
 			if(settings.verbose>1)
-				fprintf(stderr,"LinkOP ");
+				fprintf(stderr,"LinkOP");
 			
 			read(socket,&targetid,8);
 			targetnode = search_node_by_id(targetid);
+			
 			rKey.Receive(socket);
 			read(socket,&originip,4);
 			read(socket,&originid,8);
@@ -325,11 +331,12 @@ int main_thread(const int s){
 			}else{
 				targetnode->mRight[targetlevel] = gNeighborList.retrieve(rKey,originid,originaddress);
 			}
-						
+			
 			if(settings.verbose>1)
 				fprintf(stderr,"target:%s from:%s   targetlevel:%d\n",targetnode->mKey.toString(),rKey.toString(),targetlevel);
 			
-			EndFlag = 1;
+			
+			//EndFlag = 1;
 			break;
 		case FoundOp:
 			rKey.Receive(socket);
@@ -372,6 +379,7 @@ int main_thread(const int s){
 			}else{
 				serialize_longlong(buff,&buffindex,0);
 			}
+			
 			buffindex += newnode->mKey.Serialize(&buff[buffindex]);
 			serialize_int(buff,&buffindex,settings.myip);
 			serialize_longlong(buff,&buffindex,newnode->mId);
@@ -379,7 +387,6 @@ int main_thread(const int s){
 			serialize_longlong(buff,&buffindex,myVector.mVector);
 			
 			NodeList.push_back(newnode);
-			
 			assert(bufflen == buffindex && "buffsize ok");
 			
 			chklen = 0;
@@ -403,7 +410,7 @@ int main_thread(const int s){
 			}
 			
 			free(buff);
-			fprintf(stderr,"key:%s ,value:%s set in ID:%lld\n",rKey.toString(),rValue.toString(),newnode->mId);
+			//fprintf(stderr,"key:%s ,value:%s set in ID:%lld\n",rKey.toString(),rValue.toString(),newnode->mId);
 			print_nodelist();
 			fprintf(stderr,"end of SetOP\n");
 			
@@ -425,13 +432,16 @@ int main_thread(const int s){
 			read(socket,&originport,2);
 			read(socket,&originvector,8);
 			
+			
+			fprintf(stderr,"ID%lld:treating key:%s length:%d\n IP:%sn",targetnode->mId,rKey.toString(),rKey.size(),my_ntoa(originip));
+			
 			if(rKey == targetnode->mKey && originip == settings.myip && originport == settings.myport && originvector == myVector.mVector){
 				assert("boomerang of TreatOP");
 				//TODO
 			}
 			if(rKey == targetnode->mKey){
 				if(settings.verbose>1)
-					fprintf(stderr,"received key:%d but I already have it\n",rKey.mKey);
+					fprintf(stderr,"received key:%s but I already have it\n",rKey.toString());
 				//over write? <- TODO
 				
 			}else{
@@ -486,7 +496,7 @@ int main_thread(const int s){
 					EndFlag = 1;
 				}else{
 					if(settings.verbose>1)
-						fprintf(stderr,"finally treated by ID:%lld key:%d\n",targetnode->mId,targetnode->mKey.mKey);
+						fprintf(stderr,"finally treated by ID:%lld key:%s\n",targetnode->mId,targetnode->mKey.toString());
 					
 					// begin treating new node
 					
@@ -533,13 +543,13 @@ int main_thread(const int s){
 					//decide how much level to link
 					targetlevel = myVector.compare(originvector);
 					fprintf(stderr,"vector1:%llx\nvector2:%llx\n%d bit equal\n",myVector.mVector,originvector,targetlevel);
-					bufflen = 1+8+rKey.size()+4+8+2+4+1;
+					bufflen = 1+8+targetnode->mKey.size()+4+8+2+4+1;
 					buff = (char*)malloc(bufflen);
 					buffindex = 0;
 					//serialize
 					buff[buffindex++] = LinkOp;
 					serialize_longlong(buff,&buffindex,originid);
-					buffindex += targetnode->mKey.Serialize(&buff[buffindex]);//0
+					buffindex += targetnode->mKey.Serialize(&buff[buffindex]);
 					serialize_int(buff,&buffindex,settings.myip);
 					serialize_longlong(buff,&buffindex,targetnode->mId);
 					serialize_short(buff,&buffindex,settings.myport);
@@ -557,7 +567,7 @@ int main_thread(const int s){
 						serialize_int(buff,&buffindex,i);
 						buff[buffindex++] = left_or_right == Left ? Right : Left;
 						send_to_address(targetaddress,buff,bufflen);
-						buffindex -= sizeof(int)+1;
+						buffindex -= sizeof(targetlevel)+1;
 						
 						if(left_or_right == Left){
 							targetnode->mLeft[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
@@ -739,31 +749,90 @@ int main_thread(const int s){
 	state_error,
 */
 
-std::map<int,memcache_buffer> gMemcachedSockets;
+std::map<int,memcache_buffer*> gMemcachedSockets;
 
 int memcached_thread(int socket){
-	std::map<int,memcache_buffer>::iterator bufferIt;
+	std::map<int,memcache_buffer*>::iterator bufferIt;
 	memcache_buffer* buf;
+
+	//test
+	int loopback;
+	char* data;
+	int datalen,dataindex;
+	char key[256];
+	int keylength;
+	char value[256];
+	int valuelength;
+	int* intcaster;
 	
-	fprintf(stderr,"hello!\n");
+	if(settings.verbose > 2)
+		fprintf(stderr,"memcached client arrived socket:%d\n",socket);
+	
 	bufferIt = gMemcachedSockets.find(socket);
 	if(bufferIt == gMemcachedSockets.end()){
 		buf = new memcache_buffer(socket);
-		gMemcachedSockets.insert(std::pair<int,memcache_buffer>(socket,*buf));
+		gMemcachedSockets.insert(std::pair<int,memcache_buffer*>(socket,buf));
 	}else {
-		buf = &bufferIt->second;
+		buf = bufferIt->second;
 	}
-	fprintf(stderr,"called socket:%d\n",socket);
+	fprintf(stderr,"before state:%d\n",buf->getState());
 	buf->receive();
 	switch(buf->getState()){
 	case memcache_buffer::state_set:
 		fprintf(stderr,"set!!\n");
+		//fprintf(stderr,"key:%s, value:%s, length:%s\n",buf->tokens[SET_KEY].str,buf->tokens[SET_VALUE].str,buf->tokens[SET_LENGTH].str);
+		
+		keylength = buf->tokens[SET_KEY].length;
+		memcpy(key,buf->tokens[SET_KEY].str,keylength);
+		valuelength = buf->tokens[SET_VALUE].length;
+		memcpy(value,buf->tokens[SET_VALUE].str,valuelength);
+		
+		fprintf(stderr,"keylen:%d, valuelen:%d\n",keylength,valuelength);
+		
+		dataindex = 0;
+		datalen = 1 + 4 + keylength + 4 + valuelength;
+		data = (char*)malloc(datalen);
+		data[dataindex++] = SetOp;
+		
+		intcaster = (int*)&data[dataindex];
+		*intcaster = keylength;
+		dataindex += 4;
+		memcpy(&data[dataindex],key,keylength);
+		dataindex += keylength;
+		
+		intcaster = (int*)&data[dataindex];
+		*intcaster = valuelength;
+		dataindex += 4;
+		memcpy(&data[dataindex],value,valuelength);
+		dataindex += valuelength;
+		assert(dataindex == datalen);
+		
+		loopback = create_tcpsocket();
+		connect_send_close(settings.myip,settings.myport,data,datalen);
+		
+		for(int i=0;i<datalen;i++){
+			fprintf(stderr,"%d,",data[i]);
+		}
+		
+		free(data);
+		close(loopback);
+		
+		buf->ParseOK();
 		break;
 	case memcache_buffer::state_get:
 		fprintf(stderr,"get!!\n");
+		buf->ParseOK();
 		break;
+
 	case memcache_buffer::state_delete:
 		fprintf(stderr,"delete!!\n");
+		buf->ParseOK();
+		break;
+	case memcache_buffer::state_close:
+		fprintf(stderr,"close!!\n");
+		delete buf;
+		gMemcachedSockets.erase(socket);
+		close(socket);
 		break;
 	case memcache_buffer::state_error:
 		fprintf(stderr,"error!!\n");
@@ -796,7 +865,7 @@ int main(int argc,char** argv){
 	min.Minimize();
 	max.Maximize();
 	gAddressList.clear();
-	defvalue dummy(43);
+	defvalue dummy("hoge");
 	
 	settings_init();
 	NodeList.clear();

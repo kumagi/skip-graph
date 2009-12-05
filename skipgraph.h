@@ -10,7 +10,7 @@
 #include <list>
 #include <set>
 
-#define defkey intkey
+#define defkey strkey
 #define defvalue strvalue
 
 struct settings{
@@ -158,6 +158,12 @@ public:
 		memcpy(mKey,k,mLength);
 		mKey[mLength] = '\0';
 	}
+	strkey(const strkey& k){
+		mLength = k.mLength;
+		mKey = (char*)malloc(mLength+1);
+		memcpy(mKey,k.mKey,mLength);
+		mKey[mLength] = '\0';
+	}
 	strkey(int k){
 		mKey = (char*)malloc(11);
 		mLength = 0;
@@ -184,17 +190,40 @@ public:
 	int Receive(const int socket){
 		if(mKey != NULL) {
 			free(mKey);
+			mKey = NULL;
 		}
 		read(socket,&mLength,4);
+		if(mLength == 0){
+			mKey = NULL;
+			return 4;
+		}
 		mKey = (char*)malloc(mLength+1);
 		read(socket,mKey,mLength);
+		if(mLength == 1 && mKey[0] == '\0'){
+			Minimize();
+			return 5;
+		}
+		
 		mKey[mLength] = '\0';
 		return mLength + 4;
 	}
 	int Serialize(const void* buf) const {
-		int* intptr = (int*)buf;
+		int* intptr;
+		char* charptr;
+		if(isMaximum()){
+			intptr = (int*)buf;
+			*intptr = 0;
+			return 4;
+		}else if(isMinimum()){
+			intptr = (int*)buf;
+			*intptr = 1;
+			charptr = (char*)buf+4;
+			*charptr = '\0';
+			return 5;
+		}
+		intptr = (int*)buf;
 		*intptr = mLength;
-		char* charptr = (char*)buf;
+		charptr = (char*)buf;
 		charptr += 4;
 		memcpy(charptr,mKey,mLength);
 		return mLength + 4;
@@ -218,12 +247,20 @@ public:
 		return mLength == 0;
 	}
 	bool isMinimum(void) const {
-		return mKey == '\0' && mLength == 1;
+		if(mKey == NULL) {
+			return 0;
+		}
+		return *mKey == '\0' && mLength == 1;
 	}
 	int size(void)const{
-		return mLength;
+		return mLength + 4;
 	}
 	const char* toString(void) const{
+		if(isMaximum()){
+			return "*MAX*";
+		}else if(isMinimum()){
+			return "*MIN*";
+		}
 		return mKey;
 	}
 	~strkey(void){
@@ -232,19 +269,20 @@ public:
 		}
 	}
 	bool operator<(const strkey& right) const {
-		if(right.mLength == 0 && mLength > 0) {
+		if(!isMaximum() && right.isMaximum() || isMinimum() && !right.isMinimum()) {
 			return 1;
-		}else if(mLength == 0){
+		}else if(!isMinimum() && right.isMinimum() || isMaximum() && right.isMaximum() || isMinimum() && right.isMinimum()){
 			return 0;
 		}
 		return strcmp(mKey,right.mKey) < 0;
 	}
 	bool operator>(const strkey& right) const {
-		if(mLength == 0 && right.mLength > 0){
+		if(isMaximum() && !right.isMaximum() || !isMinimum() && right.isMinimum()) {
 			return 1;
-		}else if(right.mLength == 0){
+		}else if(isMinimum() && !right.isMinimum() || isMaximum() && right.isMaximum() || isMinimum() && right.isMinimum()){
 			return 0;
 		}
+		//fprintf(stderr,"%s > %s ?\n",toString(),right.toString());
 		return strcmp(mKey,right.mKey) > 0;
 	}
 	bool operator==(const strkey& right) const{
@@ -315,6 +353,12 @@ public:
 		mLength = strlen(v);
 		mValue = (char*)malloc(mLength+1);
 		memcpy(mValue,v,mLength);
+		mValue[mLength] = '\0';
+	}
+	strvalue(const strvalue& v){
+		mLength = v.mLength;
+		mValue = (char*)malloc(mLength+1);
+		memcpy(mValue,v.mValue,mLength);
 		mValue[mLength] = '\0';
 	}
 	strvalue(int v){
