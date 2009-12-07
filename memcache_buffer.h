@@ -50,7 +50,7 @@ public:
 	void receive(void);
 	bool operator<(const memcache_buffer& rightside) const;
 private:
-	void readmax(void);
+	int readmax(void);
 	inline void string_write(char* string) const;
 	inline void parse(char* start);
 	int read_tokens(char* str,int maxtokens);

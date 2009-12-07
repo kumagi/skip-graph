@@ -75,6 +75,7 @@ address* search_from_addresslist(int ip,unsigned short port){
   }
   return NULL;
 }
+
 address* add_new_address(const int socket,const int ip,const unsigned short port){
 	address* ad = new address(socket,ip,port);
 	if(socket == 0){
@@ -97,9 +98,8 @@ sg_Node* search_node_by_key(KeyType key){
 		}
 		++it;
 	}
-	return NodeList.front();
+	return NULL;
 }
-
 
 sg_Node* search_node_by_id(long long id){
 	//printf("search_node_by_id began, id:%lld\n",id);
@@ -754,9 +754,11 @@ std::map<int,memcache_buffer*> gMemcachedSockets;
 int memcached_thread(int socket){
 	std::map<int,memcache_buffer*>::iterator bufferIt;
 	memcache_buffer* buf;
+	int DeleteFlag;
+	defkey* targetkey;
+	sg_Node* targetnode;
 
 	//test
-	int loopback;
 	char* data;
 	int datalen,dataindex;
 	char key[256];
@@ -777,6 +779,8 @@ int memcached_thread(int socket){
 	}
 	fprintf(stderr,"before state:%d\n",buf->getState());
 	buf->receive();
+	
+	DeleteFlag = 0;
 	switch(buf->getState()){
 	case memcache_buffer::state_set:
 		fprintf(stderr,"set!!\n");
@@ -807,21 +811,32 @@ int memcached_thread(int socket){
 		dataindex += valuelength;
 		assert(dataindex == datalen);
 		
-		loopback = create_tcpsocket();
 		connect_send_close(settings.myip,settings.myport,data,datalen);
 		
 		for(int i=0;i<datalen;i++){
 			fprintf(stderr,"%d,",data[i]);
 		}
-		
 		free(data);
-		close(loopback);
+		
+		write(socket,"STORED\r\n",8);
 		
 		buf->ParseOK();
 		break;
 	case memcache_buffer::state_get:
 		fprintf(stderr,"get!!\n");
+		fprintf(stderr,"key:%s\n",buf->tokens[GET_KEY].str);
+		buf->tokens[GET_KEY].str[buf->tokens[GET_KEY].length] = '\0';
+		targetkey = new defkey(buf->tokens[GET_KEY].str);
+		
+		targetnode = search_node_by_key(*targetkey);
+		fprintf(stderr,"key:%s search\n",targetkey->toString());
+		if(targetnode != NULL){
+			fprintf(stderr,"key:%s found\n",buf->tokens[GET_KEY].str);
+			write(socket,targetnode->mValue.mValue,targetnode->mValue.mLength);
+		}
+		write(socket,"\r\nEND\r\n",7);
 		buf->ParseOK();
+		delete targetkey;
 		break;
 
 	case memcache_buffer::state_delete:
@@ -833,12 +848,16 @@ int memcached_thread(int socket){
 		delete buf;
 		gMemcachedSockets.erase(socket);
 		close(socket);
+		DeleteFlag = 1;
 		break;
 	case memcache_buffer::state_error:
 		fprintf(stderr,"error!!\n");
+		gMemcachedSockets.erase(socket);
+		close(socket);
+		DeleteFlag = 1;
 		break;
 	}
-	return 0;
+	return DeleteFlag;
 }
 
 void* worker(void* arg){

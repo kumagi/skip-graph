@@ -34,7 +34,7 @@ memcache_buffer::~memcache_buffer(void){
 	free(mBuff);
 	close(mSocket);
 }
-	
+
 void memcache_buffer::ParseOK(void){
 	mState = state_free;
 	if(mChecked == mRead){
@@ -44,9 +44,11 @@ void memcache_buffer::ParseOK(void){
 		mChecked = mRead = mStart = 0;
 		mSize = mReft = 128;
 		mState = state_free;
+		mBuff[0] = '\0';
 	}
 	if(mCloseflag == 1){
 		close(mSocket);
+		mState = state_close;
 	}
 	fprintf(stderr,"frried state mRead:%d mChecked:%d\n",mRead,mChecked);
 }
@@ -60,61 +62,82 @@ const int& memcache_buffer::getSocket(void) const{
 }
 
 void memcache_buffer::receive(void){
+	int newdata = 0;
+	
 	switch(mState){
 	case state_free:
 		mStart = mChecked;
 	case state_continue:
-		fprintf(stderr,"state continue\n");
-		readmax();
-		while(strncmp(&mBuff[mChecked],"\r\n",2) != 0 && mChecked < mRead){
+		newdata = readmax();
+		if(newdata == 0){
+			mState = state_close;
+			break;
+		}
+		while(strncmp(&mBuff[mChecked],"\r\n",2) != 0 && mBuff[mChecked] != '\n' && mChecked < mRead){
 			mChecked++;
 		}
 		if(mChecked == mRead){
-			fprintf(stderr,"waiting for break line\n");
 			mState = state_continue;
 			break;
 		}
-		fprintf(stderr,"mRead:%d\n",mRead);
 		mBuff[mChecked] = '\0';
 		mBuff[mChecked+1] = '\0';
 		
+		/*
+		if (strncmp(&mBuff[mChecked],"\r\n",2) != 0){
+			mRead -= 2;
+		}else if (mBuff[mChecked] != '\n'){
+			mRead -= 1;
+		}
+		*/
 		parse(&mBuff[mStart]);
-		mStart = mChecked;
 		mChecked += 2;
+		mStart = mChecked;
+		
 		if(mState != state_value){
 			break;
 		}
 	case state_value:
 		fprintf(stderr,"state value\n");
-		readmax();
+		newdata = readmax();
 		if (mRead - mStart < moreread){
 			fprintf(stderr,"value length unsatisfied\n");
 			break;
 		}
-		if(strncmp(&mBuff[mStart + moreread],"\r\n",2) != 0){
+		
+		if(strncmp(&mBuff[mStart + moreread],"\r\n",2) != 0 ){
 			string_write("CLIENT_ERROR bad data chunk");
 			mState = state_error;
+			while(strncmp(&mBuff[mChecked],"\r\n",2) != 0 && mChecked < mRead){
+				mChecked++;
+			}
+			mChecked += 2;
 			break;
 		}
 		mBuff[mStart + moreread] = '\0';
-		mChecked += moreread;
+		mChecked += moreread + 2;
 		tokens[SET_VALUE].str = &mBuff[mStart];
 		tokens[SET_VALUE].length = moreread;
 		tokens[SET_VALUE].str[moreread] = '\0';
 		mStart += moreread + 2;
 		mState = state_set;
+		
 		break;
 	default :
-		fprintf(stderr,"no data to read in this state\n");
+		mRead = mChecked;
+		mState = state_free;
 		break;
 	}
 	fprintf(stderr,"next state:%d\n",mState);
 }
+
 bool memcache_buffer::operator<(const memcache_buffer& rightside) const{
 	return mSocket < rightside.mSocket;
 }
-void memcache_buffer::readmax(void){
+
+int memcache_buffer::readmax(void){
 	int newread;
+	int totalread = 0;
 	do{
 		if(mReft==0){
 			mBuff=(char*)realloc(mBuff,mSize*2);
@@ -122,17 +145,27 @@ void memcache_buffer::readmax(void){
 			mSize *= 2;
 		}
 		newread = recv(mSocket,&mBuff[mRead],mReft,MSG_DONTWAIT);
-		mRead += newread;
-		mReft -= newread;
+		if(newread > 0){
+			mRead += newread;
+			mReft -= newread;
+			totalread += newread;
+		}
 	}while(errno!=EAGAIN && errno!=EWOULDBLOCK && newread != 0);
 	if(newread == 0){
-		mCloseflag = 0;
+		mCloseflag = 1;
 	}
-	fprintf(stderr,"received data: [%s]\n",&mBuff[mStart]);
+	/*
+	fprintf(stderr,"dumping mChecked:%d mRead:%d\n",mChecked,mRead);
+	fprintf(stderr,"received data %d bytes:",totalread);
+	for(int i=0;i<mRead;i++){
+		fprintf(stderr,"%d,",mBuff[i]);
+	}
+	*/
+	fprintf(stderr,"\n");
+	return totalread;
 }
 	
 inline void memcache_buffer::string_write(char* string) const{
-	fprintf(stderr,"koko?\n");
 	int len = strlen(string);
 	write(mSocket,string,len);
 	write(mSocket,"\r\n",2);

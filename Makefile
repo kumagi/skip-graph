@@ -1,4 +1,4 @@
-OPTS = -Wall -O0
+OPTS = -Wall -O0 -g
 OBJS = kttcp.o mytcplib.o mulio.o 
 
 target:skipgraph

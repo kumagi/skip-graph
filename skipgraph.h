@@ -144,16 +144,21 @@ public :
 };
 // key type: char[]
 class strkey : public AbstractKey{
-protected:
-	int mLength;
 public:
 	char *mKey;
+	int mLength;
 	strkey(){
 		mKey=NULL;
 		mLength=1;
 	}
 	strkey(char* k){
 		mLength = strlen(k);
+		mKey = (char*)malloc(mLength+1);
+		memcpy(mKey,k,mLength);
+		mKey[mLength] = '\0';
+	}
+	strkey(char* k,int length){
+		mLength = length;
 		mKey = (char*)malloc(mLength+1);
 		memcpy(mKey,k,mLength);
 		mKey[mLength] = '\0';
@@ -185,7 +190,6 @@ public:
 			caster /= 10;
 		}
 		*pchar = '\0';
-		
 	}
 	int Receive(const int socket){
 		if(mKey != NULL) {
@@ -267,6 +271,7 @@ public:
 		if(mKey != NULL){
 			free(mKey);
 		}
+		mKey = NULL;
 	}
 	bool operator<(const strkey& right) const {
 		if(!isMaximum() && right.isMaximum() || isMinimum() && !right.isMinimum()) {
