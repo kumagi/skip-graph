@@ -766,6 +766,7 @@ int memcached_thread(int socket){
 	char value[256];
 	int valuelength;
 	int* intcaster;
+	address* targetaddress;
 	
 	if(settings.verbose > 2)
 		fprintf(stderr,"memcached client arrived socket:%d\n",socket);
@@ -777,7 +778,7 @@ int memcached_thread(int socket){
 	}else {
 		buf = bufferIt->second;
 	}
-	fprintf(stderr,"before state:%d\n",buf->getState());
+	
 	buf->receive();
 	
 	DeleteFlag = 0;
@@ -811,11 +812,10 @@ int memcached_thread(int socket){
 		dataindex += valuelength;
 		assert(dataindex == datalen);
 		
-		connect_send_close(settings.myip,settings.myport,data,datalen);
+		targetaddress = search_from_addresslist(settings.myip,settings.myport);
+		send_to_address(targetaddress,data,datalen);
 		
-		for(int i=0;i<datalen;i++){
-			fprintf(stderr,"%d,",data[i]);
-		}
+		
 		free(data);
 		
 		write(socket,"STORED\r\n",8);
@@ -833,8 +833,9 @@ int memcached_thread(int socket){
 		if(targetnode != NULL){
 			fprintf(stderr,"key:%s found\n",buf->tokens[GET_KEY].str);
 			write(socket,targetnode->mValue.mValue,targetnode->mValue.mLength);
+			write(socket,"\r\n",2);
 		}
-		write(socket,"\r\nEND\r\n",7);
+		write(socket,"END\r\n",5);
 		buf->ParseOK();
 		delete targetkey;
 		break;

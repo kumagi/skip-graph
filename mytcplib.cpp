@@ -32,9 +32,11 @@ int connect_port_ip(const int socket,const int ip,const unsigned short port){
 	addr.sin_port=htons(port);
 	
 	if(connect(socket,(struct sockaddr*)&addr,sizeof(addr)) != 0){
+		perror("connect");
 		fprintf(stderr,"target:%s\n",my_ntoa(ip));
 		return 1;
 	}
+	perror("connect");
 	return 0;
 }
 

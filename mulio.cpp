@@ -57,7 +57,7 @@ void mulio::SetSocket(const int socket){
 	if( socket > mMaxFd ){
 		mMaxFd = socket;
 	}
-	printf("setsocket:%d\n",socket);
+	//	printf("setsocket:%d\n",socket);
 	write(awaker[1],"",1);
 }
 void mulio::worker(void){
