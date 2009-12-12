@@ -23,6 +23,7 @@
 #include "mulio.h"
 #include "memcache_buffer.h"
 #include "mytcplib.h"
+#include "aso.hpp"
 
 #define DEBUG
 #ifdef DEBUG
@@ -33,6 +34,7 @@
 typedef sg_neighbor<defkey> sg_Neighbor;
 typedef neighbor_list<defkey> neighbor_List;
 mulio mulio,memcached;
+aso gAsync_out;
 membership_vector myVector;
 neighbor_list<defkey> gNeighborList;
 std::list<sg_Node*> NodeList;
@@ -92,13 +94,10 @@ address* add_new_address(const int socket,const int ip,const unsigned short port
 template<typename KeyType>
 sg_Node* search_node_by_key(KeyType key){
 	std::list<sg_Node*>::iterator it = NodeList.begin();
-	while(it != NodeList.end() ){
-		if((*it)->mKey == key){
-			return *it;
-		}
+	while( (*it)->mKey < key ){
 		++it;
 	}
-	return NULL;
+	return *it;
 }
 
 sg_Node* search_node_by_id(long long id){
@@ -818,7 +817,7 @@ int memcached_thread(int socket){
 		
 		free(data);
 		
-		write(socket,"STORED\r\n",8);
+		gAsync_out.send(socket,"STORED\r\n",8);
 		
 		buf->ParseOK();
 		break;
@@ -830,7 +829,18 @@ int memcached_thread(int socket){
 		
 		targetnode = search_node_by_key(*targetkey);
 		fprintf(stderr,"key:%s search\n",targetkey->toString());
-		if(targetnode != NULL){
+		if(targetnode->mKey > *targetkey){
+			datalen = 1 + 8 + 4 + buf->tokens[GET_KEY].length + 4 + 4 + 2;
+			data = (char*)malloc(datalen);
+			data[dataindex++] = SearchOp;
+			serialize_longlong(data,&dataindex,0);
+			serialize_int(data,&dataindex,buf->tokens[GET_KEY].length);
+			memcpy(&data[dataindex],buf->tokens[GET_KEY].str,buf->tokens[GET_KEY].length);
+			serialize_int(data,&dataindex,MAXLEVEL);
+			serialize_int(data,&dataindex,settings.myip);
+			serialize_short(data,&dataindex,settings.memcacheport);
+			gAsync_out.send(targetnode->mLeft[0]->mAddress->mSocket,data,dataindex);
+		}else{
 			fprintf(stderr,"key:%s found\n",buf->tokens[GET_KEY].str);
 			write(socket,targetnode->mValue.mValue,targetnode->mValue.mLength);
 			write(socket,"\r\n",2);
@@ -839,7 +849,7 @@ int memcached_thread(int socket){
 		buf->ParseOK();
 		delete targetkey;
 		break;
-
+		
 	case memcache_buffer::state_delete:
 		fprintf(stderr,"delete!!\n");
 		buf->ParseOK();
@@ -880,6 +890,7 @@ int main(int argc,char** argv){
 	int targetsocket;
 	address* myAddress;
 	address* newAddress;
+	
 	
 	//initialize
 	min.Minimize();
@@ -964,6 +975,8 @@ int main(int argc,char** argv){
 	mulio.SetAcceptSocket(listening);
 	mulio.SetCallback(main_thread);
 	mulio.run();// accept thread
+	
+	gAsync_out.run(2); // Asynchronous output manager
 	
 	int memcachesocket = create_tcpsocket();
 	set_reuse(memcachesocket);
