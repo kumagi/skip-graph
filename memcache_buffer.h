@@ -47,12 +47,12 @@ public:
 	const int& getState(void) const;
 	
 	const int& getSocket(void) const;
-	void receive(void);
+	int receive(void);
 	bool operator<(const memcache_buffer& rightside) const;
 private:
 	int readmax(void);
 	inline void string_write(char* string) const;
-	inline void parse(char* start);
+	inline int parse(char* start);
 	int read_tokens(char* str,int maxtokens);
 	void init_buffer(void);
 };

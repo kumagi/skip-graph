@@ -36,7 +36,6 @@ int connect_port_ip(const int socket,const int ip,const unsigned short port){
 		fprintf(stderr,"target:%s\n",my_ntoa(ip));
 		return 1;
 	}
-	perror("connect");
 	return 0;
 }
 
@@ -149,10 +148,11 @@ int chk_myip(void){
 int my_aton(char* ipaddress){
 	struct in_addr tmp_inaddr;
 	int ip = 0;
-	if(inet_aton(optarg,&tmp_inaddr)){
+	if(inet_aton(ipaddress,&tmp_inaddr)){
 		ip = tmp_inaddr.s_addr;
 	}else {
 		printf("aton:address invalid\n");
 	}
 	return ip;
 }
+  

@@ -276,15 +276,15 @@ public:
 	bool operator<(const strkey& right) const {
 		if(!isMaximum() && right.isMaximum() || isMinimum() && !right.isMinimum()) {
 			return 1;
-		}else if(!isMinimum() && right.isMinimum() || isMaximum() && right.isMaximum() || isMinimum() && right.isMinimum()){
+		}else if(isMaximum() || right.isMinimum()){
 			return 0;
 		}
 		return strcmp(mKey,right.mKey) < 0;
 	}
 	bool operator>(const strkey& right) const {
-		if(isMaximum() && !right.isMaximum() || !isMinimum() && right.isMinimum()) {
+		if(!isMinimum() && right.isMinimum() || isMaximum() && !right.isMaximum()) {
 			return 1;
-		}else if(isMinimum() && !right.isMinimum() || isMaximum() && right.isMaximum() || isMinimum() && right.isMinimum()){
+		}else if(isMinimum() || right.isMaximum()){
 			return 0;
 		}
 		//fprintf(stderr,"%s > %s ?\n",toString(),right.toString());
@@ -357,14 +357,12 @@ public:
 	strvalue(const char* v){
 		mLength = strlen(v);
 		mValue = (char*)malloc(mLength+1);
-		memcpy(mValue,v,mLength);
-		mValue[mLength] = '\0';
+		strcpy(mValue,v);
 	}
 	strvalue(const strvalue& v){
 		mLength = v.mLength;
 		mValue = (char*)malloc(mLength+1);
-		memcpy(mValue,v.mValue,mLength);
-		mValue[mLength] = '\0';
+		strcpy(mValue,v.mValue);
 	}
 	strvalue(int v){
 		mValue = (char*)malloc(11);
@@ -406,6 +404,12 @@ public:
 		memcpy(charptr,mValue,mLength);
 		return mLength + 4;
 	}
+	void operator=(const strvalue& v){
+		mLength = v.mLength;
+		mValue = (char*)malloc(mLength+1);
+		strcpy(mValue,v.mValue);
+		return;
+	}
 	const char* toString(void) const {
 		if(mLength==0){
 			return "";
@@ -438,29 +442,38 @@ public:
 long long gId = 0;
 template<typename KeyType, typename ValueType>
 class sg_node{
+private:
+	KeyType mKey;
+	ValueType mValue;
 public:
-	const KeyType mKey;
-	const ValueType mValue;
 	const long long mId;
 	sg_neighbor<KeyType>* mLeft[MAXLEVEL];
 	sg_neighbor<KeyType>* mRight[MAXLEVEL];
 	
 	sg_node(const KeyType& k,const ValueType& v)
-		:mKey(k),mValue(v),mId(gId++)
-	{
+		:mKey(k),mValue(v),mId(gId++){
 		for(int i=0;i<MAXLEVEL;i++){
 			mLeft[i] = NULL;
 			mRight[i] = NULL;
 		}
 	}
+	inline const KeyType& getKey(void){
+		return mKey;
+	}
+	inline const ValueType& getValue(void){
+		return mValue;
+	}
+								  
+	void changeValue(const ValueType& v){
+		mValue = v;
+	}
+	
 	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const
 	{
 		return mKey < rightside.mKey;
 	}
 };
 typedef sg_node<defkey,defvalue> sg_Node;
-
-
 
 /* random functions */
 unsigned int sysrand(void){
@@ -489,26 +502,6 @@ char* randstring(int length){// do free();
 	return string;
 }
 
-/* NodeList */
-
-class node_list{
-public:
-	std::list<sg_Node* > mNodeList; 
-	node_list(void){
-		mNodeList.clear();
-	}
-	~node_list(void){
-		mNodeList.clear();
-	}
-	void print(void) {
-		std::list<sg_Node*>::iterator it = mNodeList.begin();
-		while(it != mNodeList.end() ){
-			if((*it)->mLeft[0]){
-				printf("left:%s ",(*it)->mLeft[0]->mKey.toString());
-			}
-		}
-	}
-};
 
 
 /* membership_vector */
@@ -601,4 +594,73 @@ public:
 	}
 };
 
+
+/* NodeList */
+template<typename KeyType,typename ValueType>
+class node_list{
+public:
+	typedef sg_node<KeyType,ValueType> sg_Node;
+	std::list<sg_Node*> nodeList;
+	node_list(void){
+		nodeList.clear();
+	}
+	~node_list(void){
+		nodeList.clear();
+	}
+	bool empty(void){
+		return nodeList.empty();
+	}
+	void print(void){
+		typename std::list<sg_Node*>::iterator it = nodeList.begin();
+		while(it != nodeList.end() ){
+			printf("%lld: key=%s  value=%s",(*it)->mId,(*it)->getKey().toString(),(*it)->getValue().toString());
+			if((*it)->mLeft[0]){
+				printf("  left=%s ",(*it)->mLeft[0]->mKey.toString());
+			}else{
+				printf("  left=no connect");
+			}
+			if((*it)->mRight[0]){
+				printf("  right=%s\n",(*it)->mRight[0]->mKey.toString());
+			}else{
+				printf("  right=no connect\n");
+			}
+			++it;
+		}
+	}
+	void insert(sg_Node* newnode){//TODO
+		typename std::list<sg_Node*>::iterator it = nodeList.begin();
+		if(nodeList.empty()){
+			nodeList.push_back(newnode);
+		}else{
+			while(it != nodeList.end() && (*it)->getKey() < newnode->getKey()){
+				++it;
+			}
+			nodeList.insert(it,newnode);
+		}
+		return;
+	}
+	sg_Node* search_by_id(const long long id){
+		if(nodeList.empty()){
+			return NULL;
+		}
+		typename std::list<sg_Node*>::iterator it = nodeList.begin();
+		while(it != nodeList.end() ){
+			if((*it)->mId == id){
+				return *it;
+			}
+			++it;
+		}
+		return NULL;
+	}
+	sg_Node* search_by_key(const KeyType& key){// it may returns nearest neighbor
+		if(nodeList.empty()){
+			return NULL;
+		}
+		typename std::list<sg_Node*>::iterator it = nodeList.begin();
+		while( it != nodeList.end() && (*it)->getKey() < key ){
+			++it;
+		}
+		return *it;
+	}
+};
 #endif

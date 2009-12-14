@@ -61,8 +61,9 @@ const int& memcache_buffer::getSocket(void) const{
 	return mSocket;
 }
 
-void memcache_buffer::receive(void){
+int memcache_buffer::receive(void){
 	int newdata = 0;
+	int tokennum;
 	
 	switch(mState){
 	case state_free:
@@ -90,7 +91,7 @@ void memcache_buffer::receive(void){
 			mRead -= 1;
 		}
 		*/
-		parse(&mBuff[mStart]);
+		tokennum = parse(&mBuff[mStart]);
 		mChecked += 2;
 		mStart = mChecked;
 		
@@ -114,6 +115,7 @@ void memcache_buffer::receive(void){
 			mChecked += 2;
 			break;
 		}
+		tokennum++;
 		mBuff[mStart + moreread] = '\0';
 		mChecked += moreread + 2;
 		tokens[SET_VALUE].str = &mBuff[mStart];
@@ -129,6 +131,7 @@ void memcache_buffer::receive(void){
 		break;
 	}
 	fprintf(stderr,"next state:%d\n",mState);
+	return tokennum;
 }
 
 bool memcache_buffer::operator<(const memcache_buffer& rightside) const{
@@ -171,7 +174,7 @@ inline void memcache_buffer::string_write(char* string) const{
 	write(mSocket,"\r\n",2);
 }
 		
-inline void memcache_buffer::parse(char* start){
+inline int memcache_buffer::parse(char* start){
 	int cnt;
 	if(strncmp(start,"set ",4) == 0){ // set [key] <flags> <exptime> <length>
 		start += 3;
@@ -180,7 +183,7 @@ inline void memcache_buffer::parse(char* start){
 		if(cnt < 4){
 			string_write("ERROR");
 			mState = state_error;
-			return;
+			return cnt;
 		}
 		moreread = natoi(tokens[SET_LENGTH].str,tokens[SET_LENGTH].length);
 		fprintf(stderr,"waiting for value for %d length\n",moreread);
@@ -196,6 +199,7 @@ inline void memcache_buffer::parse(char* start){
 		printf("operation:%s\n",start);
 		assert(!"invalid operation\n");
 	}
+	return cnt;
 }
 		
 int memcache_buffer::read_tokens(char* str,int maxtokens){

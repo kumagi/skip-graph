@@ -3,7 +3,7 @@ OBJS = kttcp.o mytcplib.o mulio.o
 
 target:skipgraph
 
-skipgraph:skipgraph.o mytcplib.o mulio.o memcache_buffer.o aso.o
+skipgraph:skipgraph.o mytcplib.o mulio.o memcache_buffer.o aso.o suspend.hpp
 	g++ skipgraph.o mytcplib.o mulio.o memcache_buffer.o aso.o -o skipgraph -pthread -lrt $(OPTS)
 
 skipgraph.o:skipgraph.cpp skipgraph.h
