@@ -110,7 +110,7 @@ public:
 template <typename keytype,typename valuetype>
 class suspend{
 private:
-	int mSocket;
+	const int mSocket;
 	std::list<node*> suspend_list;
 	int counter;
 public:

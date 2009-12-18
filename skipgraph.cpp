@@ -1,4 +1,5 @@
 
+
 #include "skipgraph.h"
 #include <pthread.h>
 
@@ -24,7 +25,6 @@
 #include "memcache_buffer.h"
 #include "mytcplib.h"
 #include "aso.hpp"
-#include "suspend.hpp"
 
 #define DEBUG
 #ifdef DEBUG
@@ -312,8 +312,7 @@ int main_thread(const int s){
 			
 			rKey.Receive(socket);
 			rValue.Receive(socket);
-			newnode = new sg_Node(rKey,rValue);
-			fprintf(stderr,"ok\n");
+			newnode = gNodeList.set_to_graph(rKey,rValue,0);
 			
 			//search the nearest neighbor or node from my list
 			/*  TODO  */
@@ -864,6 +863,7 @@ int memcached_thread(int socket){
 	return DeleteFlag;
 }
 
+
 void* worker(void* arg){
 	mulio.eventloop();// accept thread
 	return NULL;
@@ -934,8 +934,8 @@ int main(int argc,char** argv){
 		sg_Node* minnode;
 		sg_Node* maxnode;
 		
-		minnode = new sg_Node(min,dummy);
-		maxnode = new sg_Node(max,dummy);
+		minnode = gNodeList.set_to_graph(min,dummy);
+		maxnode = gNodeList.set_to_graph(max,dummy);
 		// create left&right end
 		
 		sg_Neighbor *minpointer,*maxpointer;

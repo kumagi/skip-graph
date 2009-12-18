@@ -2,6 +2,7 @@
 #define SKIPGRAPH
 #define MAXLEVEL 8
 #include "mytcplib.h"
+#include "suspend.hpp"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -445,13 +446,14 @@ class sg_node{
 private:
 	KeyType mKey;
 	ValueType mValue;
+	suspend<KeyType,ValueType> mInformer;
 public:
 	const long long mId;
 	sg_neighbor<KeyType>* mLeft[MAXLEVEL];
 	sg_neighbor<KeyType>* mRight[MAXLEVEL];
 	
-	sg_node(const KeyType& k,const ValueType& v)
-		:mKey(k),mValue(v),mId(gId++){
+	sg_node(const KeyType& k,const ValueType& v,int socket)
+		:mKey(k),mValue(v),mInformer(socket),mId(gId++){
 		for(int i=0;i<MAXLEVEL;i++){
 			mLeft[i] = NULL;
 			mRight[i] = NULL;
@@ -626,6 +628,13 @@ public:
 			}
 			++it;
 		}
+	}
+	sg_Node* set_to_graph(const defkey& key, const defvalue& value, int responseSocket = 0){
+		sg_Node* newnode = new sg_node<KeyType,ValueType>(key,value,responseSocket);
+		TODO
+		
+		
+		return newnode;
 	}
 	void insert(sg_Node* newnode){//TODO
 		typename std::list<sg_Node*>::iterator it = nodeList.begin();
