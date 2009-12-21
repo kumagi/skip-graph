@@ -12,6 +12,7 @@
 #include <semaphore.h>
 #include <queue>//std::queue
 #include <map>//std::map
+#define NDEBUG
 
 #include <stdio.h>//fprintf
 

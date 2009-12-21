@@ -29,7 +29,7 @@ public:
 		if(value.mValue != NULL){
 			sentlength = write(socket,value.mValue,value.mLength);
 			assert(sentlength == value.mLength);
-			fprintf(stderr,"send %d bytes[%s]\n",sentlength,value.mValue);
+			//fprintf(stderr,"send %d bytes[%s]\n",sentlength,value.mValue);
 		}
 		return sentlength;
 	}
@@ -66,7 +66,7 @@ public:
 	int send(const int socket) const{
 		int sentlength = write(socket,str,length);
 		assert(sentlength == length);
-		fprintf(stderr,"send %d bytes[%s]\n",length,str);
+		//fprintf(stderr,"send %d bytes[%s]\n",length,str);
 		return sentlength;
 	}
 	inline int receive(const int socket){
@@ -125,10 +125,14 @@ public:
 	inline void add(const char* c){
 		suspend_list.push_back(new node_str(c));
 	}
+	inline const int getCounter(void){
+		return counter;
+	}
 	
 	inline void receive_value(const int socket,const keytype key){
 		valuetype* value;
 		value = search_by_key(key);
+		//fprintf(stderr,"received !! %d\n",counter);
 		if (value->mValue == NULL) {
 			--counter;
 		}
@@ -136,6 +140,7 @@ public:
 	}
 	
 	inline void decrement_cnt(void){
+		//fprintf(stderr,"decremented !! %d\n",counter);
 		--counter;
 	}
 	
@@ -156,7 +161,7 @@ private:
 		typename std::list<node*>::iterator it = suspend_list.begin();
 		node_kvp<keytype,valuetype>* tmpkey;
 		while(it != suspend_list.end()){
-			fprintf(stderr,"iterating\n");
+			//fprintf(stderr,"iterating\n");
 			if((*it)->hasPair()){
 				tmpkey = (node_kvp<keytype,valuetype>*)*it;
 				if(tmpkey->getKey() == key){

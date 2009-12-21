@@ -26,7 +26,6 @@
 #include "mytcplib.h"
 #include "aso.hpp"
 
-#define DEBUG
 #ifdef DEBUG
 //void* patient;
 #endif
@@ -40,7 +39,7 @@ membership_vector myVector;
 neighbor_list<defkey> gNeighborList;
 node_list<defkey,defvalue> gNodeList;
 std::list<address> gAddressList;
-std::map<int,suspend<defkey,defvalue>*> gSuspendSockets;
+std::multimap<defkey,suspend<defkey,defvalue>*> gStoreSuspend;
 
 
 address* get_some_address(void){
@@ -70,28 +69,13 @@ address* add_new_address(const int socket,const int ip,const unsigned short port
 	}
 	gAddressList.push_back(*ad);
 	
-	fprintf(stderr,"new address %s:%d socket:%d\n",my_ntoa(ad->mIP),ad->mPort,ad->mSocket);
+	//fprintf(stderr,"new address %s:%d socket:%d\n",my_ntoa(ad->mIP),ad->mPort,ad->mSocket);
 	return ad;
 }
 
 void print_usage(void);
 void settings_init(void);
 
-enum Op{
-	SearchOp,
-	RangeOp,
-	FoundOp,
-	NotfoundOp,
-	SetOp,
-	LinkOp,
-	TreatOp,
-	IntroduceOp,
-	ViewOp,
-};
-enum Left_Right{
-	Left,
-	Right,
-};
 
 int send_to_address(const address* ad,const char* buff,const int bufflen){
 	int sendsize;
@@ -99,7 +83,7 @@ int send_to_address(const address* ad,const char* buff,const int bufflen){
 	
 	sendsize = write(ad->mSocket,buff,bufflen);
 	if(sendsize<=0){
-		fprintf(stderr,"send_to_address:failed to write %d\n",ad->mSocket);
+		//fprintf(stderr,"send_to_address:failed to write %d\n",ad->mSocket);
 		exit(0);
 	}
 	return sendsize;
@@ -118,23 +102,25 @@ int main_thread(const int s){
 	unsigned short targetport,originport;
 	int targetlevel,originlevel;
 	long long originvector; //myVector is global
-	sg_Node *targetnode,*newnode;
+	sg_Node *targetnode;//,*newnode;
 	char left_or_right;
 	std::list<address>::iterator AddressIt;
-	std::map<int,suspend<defkey,defvalue>*>::iterator SuspendIt;
+	std::multimap<defkey,suspend<defkey,defvalue>*>::iterator SuspendIt;
 	address *targetaddress,*originaddress;
 	
 	defkey rKey;//received Key
 	defvalue rValue;//received Value
 	
+	/*
 	if(settings.verbose>1)
 		fprintf(stderr,"socket:%d ",socket);
+	*/
 	
 	int EndFlag = 0,DeleteFlag = 0;
 	while(EndFlag == 0){
 		chklen = read(socket,&op,1);
 		if(chklen <= 0){
-			fprintf(stderr," closed %d",socket);
+			//fprintf(stderr," closed %d",socket);
 			perror("  ");
 			close(socket);
 			for(AddressIt = gAddressList.begin(); AddressIt != gAddressList.end(); ++AddressIt){
@@ -160,7 +146,7 @@ int main_thread(const int s){
 			read(socket,&targetlevel,4);
 			read(socket,&targetip,4);
 			read(socket,&targetport,2); 
-			fprintf(stderr,"received searchkey:%s mykey:%s\n",rKey.toString(),targetnode->getKey().toString());
+			//fprintf(stderr,"received searchkey:%s mykey:%s\n",rKey.toString(),targetnode->getKey().toString());
 			
 			if(rKey == targetnode->getKey()){
 				//send FoundOP
@@ -178,7 +164,7 @@ int main_thread(const int s){
 				connect_send_close(targetip,targetport,buff,bufflen);
 				free(buff);
 			}else{
-				fprintf(stderr,"%s : %s ?\n",rKey.toString(), targetnode->getKey().toString());
+				//fprintf(stderr,"%s : %s ?\n",rKey.toString(), targetnode->getKey().toString());
 				if(rKey > targetnode->getKey()){
 					//send SearchOP to Rightside
 					left_or_right = Right;
@@ -276,9 +262,13 @@ int main_thread(const int s){
 			
 			
 			if(targetlevel == 0){
-				SuspendIt = gSuspendSockets.find(socket);
+				SuspendIt = gStoreSuspend.find(targetnode->getKey());
 				SuspendIt->second->decrement_cnt();
-				SuspendIt->second->send_if_can();
+				//fprintf(stderr,"suspend decremented:%d\n",SuspendIt->second->getCounter());
+				if(SuspendIt->second->send_if_can()){
+					gStoreSuspend.erase(SuspendIt);
+					//fprintf(stderr,"done\n\n");
+				}
 			}
 			
 			if(settings.verbose>1)
@@ -288,22 +278,26 @@ int main_thread(const int s){
 			break;
 		case FoundOp:
 			rKey.Receive(socket);
-			SuspendIt = gSuspendSockets.find(socket);//TODO
+			SuspendIt = gStoreSuspend.find(rKey);
 			SuspendIt->second->receive_value(socket,rKey);
-			SuspendIt->second->send_if_can();
+			if(SuspendIt->second->send_if_can()){
+				gStoreSuspend.erase(SuspendIt);
+			}
 			
-			fprintf(stderr,"key:%s found!  value:%s\n",rKey.toString(),rValue.toString());
+			//fprintf(stderr,"key:%s found!  value:%s\n",rKey.toString(),rValue.toString());
 			EndFlag = 1;
 			break;
 		case NotfoundOp:
 			rKey.Receive(socket);
-			SuspendIt = gSuspendSockets.find(socket);
+			SuspendIt = gStoreSuspend.find(rKey);
 			SuspendIt->second->decrement_cnt();
-			SuspendIt->second->send_if_can();
+			if(SuspendIt->second->send_if_can()){
+				gStoreSuspend.erase(SuspendIt);
+			}
 			
-			fprintf(stderr,"key:%s not found ! ",rKey.toString());
+			//fprintf(stderr,"key:%s not found ! ",rKey.toString());
 			rKey.Receive(socket);
-			fprintf(stderr,"nearest key:%s\n",rKey.toString());
+			//fprintf(stderr,"nearest key:%s\n",rKey.toString());
 			EndFlag = 1;
 			break;
 		case SetOp:
@@ -312,52 +306,52 @@ int main_thread(const int s){
 			
 			rKey.Receive(socket);
 			rValue.Receive(socket);
-			newnode = gNodeList.set_to_graph(rKey,rValue,0);
 			
-			//search the nearest neighbor or node from my list
-			/*  TODO  */
 			targetnode = gNodeList.search_by_key(rKey);
 			if(targetnode->getKey() == rKey){
-				//already that key exists
 				targetnode->changeValue(rValue);
 			}
-			
+			//targetnode = gNodeList.set_to_graph(rKey,rValue,0);//the node to introduce to
+			/*
 			// Build up list with memvership vector
 			buffindex = 0;
 			bufflen = 1+8+newnode->getKey().size()+4+8+2+8;
 			buff = (char*)malloc(bufflen);
 			buff[buffindex++] = TreatOp;
 			
-			targetnode=NULL;//TODO
 			if(targetnode){
 				serialize_longlong(buff,&buffindex,targetnode->mId);
 			}else{
 				serialize_longlong(buff,&buffindex,0);
 			}
-			
 			buffindex += newnode->getKey().Serialize(&buff[buffindex]);
 			serialize_int(buff,&buffindex,settings.myip);
 			serialize_longlong(buff,&buffindex,newnode->mId);
 			serialize_short(buff,&buffindex,settings.myport);
 			serialize_longlong(buff,&buffindex,myVector.mVector);
-			
-			gNodeList.insert(newnode);
-			assert(bufflen == buffindex && "buffsize ok");
-			
+			assert(bufflen == buffindex && "buffsize ok?");
 			chklen = 0;
-			
-			printf("addresses:%d\n",gAddressList.size());
-			for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
-				if(AddressIt->mIP == settings.myip && gNodeList.empty()){
-					continue;
-				}
-				fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
-				chklen = send_to_address(&*AddressIt,buff,bufflen);
-				if(chklen > 0){
-					fprintf(stderr,"ok\n");
-					break;
+			if(targetnode){
+				if(targetnode->mRight[0]){
+					send_to_address(targetnode->mRight[0]->mAddress,buff,bufflen);
+				}else if(targetnode->mLeft[0]){
+					send_to_address(targetnode->mLeft[0]->mAddress,buff,bufflen);
 				}else{
-					fprintf(stderr,"NG,try next address..\n");
+					assert("bad node selected");
+				}
+			}else {
+				for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
+					if(AddressIt->mIP == settings.myip && gNodeList.empty()){
+						continue;
+					}
+					//fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
+					chklen = send_to_address(&*AddressIt,buff,bufflen);
+					if(chklen > 0){
+						//fprintf(stderr,"ok\n");
+						break;
+					}else{
+						//fprintf(stderr,"NG,try next address..\n");
+					}
 				}
 			}
 			if(chklen <= 0){
@@ -365,9 +359,10 @@ int main_thread(const int s){
 			}
 			
 			free(buff);
+			*/
 			//fprintf(stderr,"key:%s ,value:%s set in ID:%lld\n",rKey.toString(),rValue.toString(),newnode->mId);
 			gNodeList.print();
-			fprintf(stderr,"end of SetOP\n");
+			//fprintf(stderr,"end of SetOP\n");
 			
 			EndFlag = 1;
 			//DeleteFlag = 1;
@@ -388,7 +383,7 @@ int main_thread(const int s){
 			read(socket,&originvector,8);
 			
 			
-			fprintf(stderr,"ID%lld:treating key:%s length:%d\n IP:%sn",targetnode->mId,rKey.toString(),rKey.size(),my_ntoa(originip));
+			//fprintf(stderr,"ID%lld:treating key:%s length:%d\n IP:%sn",targetnode->mId,rKey.toString(),rKey.size(),my_ntoa(originip));
 			
 			if(rKey == targetnode->getKey() && originip == settings.myip && originport == settings.myport && originvector == myVector.mVector){
 				assert("boomerang of TreatOP");
@@ -440,10 +435,10 @@ int main_thread(const int s){
 					
 					if(left_or_right == Right){
 						send_to_address(targetnode->mRight[targetlevel]->mAddress,buff,bufflen);
-						fprintf(stderr,"TreatOP to address %s:%d socket:%d\n",my_ntoa(targetnode->mRight[targetlevel]->mAddress->mIP),targetnode->mRight[targetlevel]->mAddress->mPort,targetnode->mRight[targetlevel]->mAddress->mSocket);
+						//fprintf(stderr,"TreatOP to address %s:%d socket:%d\n",my_ntoa(targetnode->mRight[targetlevel]->mAddress->mIP),targetnode->mRight[targetlevel]->mAddress->mPort,targetnode->mRight[targetlevel]->mAddress->mSocket);
 					}else{
 						send_to_address(targetnode->mLeft[targetlevel]->mAddress,buff,bufflen);
-						fprintf(stderr,"TreatOP to address %s:%d socket:%d\n",my_ntoa(targetnode->mLeft[targetlevel]->mAddress->mIP),targetnode->mLeft[targetlevel]->mAddress->mPort,targetnode->mLeft[targetlevel]->mAddress->mSocket);
+						//fprintf(stderr,"TreatOP to address %s:%d socket:%d\n",my_ntoa(targetnode->mLeft[targetlevel]->mAddress->mIP),targetnode->mLeft[targetlevel]->mAddress->mPort,targetnode->mLeft[targetlevel]->mAddress->mSocket);
 					}
 					
 					
@@ -462,13 +457,13 @@ int main_thread(const int s){
 					buff = (char*)malloc(bufflen);
 					buff[buffindex++] = IntroduceOp;
 					if(left_or_right == Left && targetnode->mLeft[0]){
-						fprintf(stderr,"target ID:%lld\n",targetnode->mLeft[0]->mId);
+						//fprintf(stderr,"target ID:%lld\n",targetnode->mLeft[0]->mId);
 						serialize_longlong(buff,&buffindex,targetnode->mLeft[0]->mId);
 					}else if(left_or_right == Right && targetnode->mRight[0]) {
-						fprintf(stderr,"target ID:%lld\n",targetnode->mRight[0]->mId);
+						//fprintf(stderr,"target ID:%lld\n",targetnode->mRight[0]->mId);
 						serialize_longlong(buff,&buffindex,targetnode->mRight[0]->mId);
 					}else{
-						fprintf(stderr,"no node to introduce from %s\n",targetnode->getKey().toString());
+						//fprintf(stderr,"no node to introduce from %s\n",targetnode->getKey().toString());
 					}
 					
 					buffindex += rKey.Serialize(&buff[buffindex]);
@@ -497,7 +492,7 @@ int main_thread(const int s){
 					
 					//decide how much level to link
 					targetlevel = myVector.compare(originvector);
-					fprintf(stderr,"vector1:%llx\nvector2:%llx\n%d bit equal\n",myVector.mVector,originvector,targetlevel);
+					//fprintf(stderr,"vector1:%llx\nvector2:%llx\n%d bit equal\n",myVector.mVector,originvector,targetlevel);
 					bufflen = 1+8+targetnode->getKey().size()+4+8+2+4+1;
 					buff = (char*)malloc(bufflen);
 					buffindex = 0;
@@ -516,7 +511,7 @@ int main_thread(const int s){
 						targetaddress = add_new_address(newsocket,originip,originport);
 						mulio.SetSocket(newsocket);
 					}
-					fprintf(stderr,"LinkOP to address %s:%d socket:%d\n",my_ntoa(targetaddress->mIP),targetaddress->mPort,targetaddress->mSocket);
+					//fprintf(stderr,"LinkOP to address %s:%d socket:%d\n",my_ntoa(targetaddress->mIP),targetaddress->mPort,targetaddress->mSocket);
 					
 					for(int i=0;i<=targetlevel;i++){
 						serialize_int(buff,&buffindex,i);
@@ -573,10 +568,10 @@ int main_thread(const int s){
 			read(socket,&targetid,8);
 			targetnode = gNodeList.search_by_id(targetid);
 			if(targetnode == NULL){
-				fprintf(stderr,"there is no node such ID:%lld\n",targetid);
+				//fprintf(stderr,"there is no node such ID:%lld\n",targetid);
 				break;
 			}
-			fprintf(stderr,"found %lld key:%s\n",targetnode->mId,targetnode->getKey().toString());
+			//fprintf(stderr,"found %lld key:%s\n",targetnode->mId,targetnode->getKey().toString());
 			
 			rKey.Receive(socket);
 			read(socket,&originip,4);
@@ -623,7 +618,7 @@ int main_thread(const int s){
 				}else{
 					targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
 				}
-				printf("Link from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
+				//printf("Link from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
 			}
 			free(buff);
 			
@@ -654,6 +649,7 @@ int main_thread(const int s){
 						send_to_address(targetnode->mLeft[targetlevel]->mAddress,buff,bufflen);
 					}
 					free(buff);
+					/*
 					if(left_or_right == Left && targetnode->mRight[targetlevel]){
 						fprintf(stderr,"relay IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
 					}else if(left_or_right == Right && targetnode->mLeft[targetlevel]){
@@ -661,13 +657,15 @@ int main_thread(const int s){
 					}else{
 						fprintf(stderr,"end of relay\n");
 					}
+					//*/
 				}
+				
 			}
-			fprintf(stderr,"end of Introduce Op\n");
+			//fprintf(stderr,"end of Introduce Op\n");
 			EndFlag = 1;
 			break;
 		case ViewOp:
-			fprintf(stderr,"view\n");
+			//fprintf(stderr,"view\n");
 			gNodeList.print();
 			EndFlag = 1;
 			break;
@@ -706,29 +704,26 @@ int main_thread(const int s){
 
 std::map<int,memcache_buffer*> gMemcachedSockets;
 
-int memcached_thread(int socket){
+int memcached_thread(const int socket){
 	std::map<int,memcache_buffer*>::iterator bufferIt;
 	memcache_buffer* buf;
+	char* buff;
+	int bufflen,chklen;
 	int tokennum;
 	int DeleteFlag;
 	defkey* targetkey;
-	sg_Node* targetnode;
-	std::map<int,suspend<defkey,defvalue>*>::iterator suspendIt;
+	defvalue* targetvalue;
+	sg_Node *targetnode,*newnode;
+	std::multimap<defkey,suspend<defkey,defvalue>*>::iterator suspendIt;
 	suspend<defkey,defvalue>* newSuspend;
+	std::list<address>::iterator AddressIt;
 	
 	//test
 	char* data;
 	int datalen,dataindex;
-	char key[256];
-	int keylength;
-	char value[256];
-	int valuelength;
-	int* intcaster;
-	address* targetaddress;
 	
 	if(settings.verbose > 2)
 		fprintf(stderr,"memcached client arrived socket:%d\n",socket);
-	
 	bufferIt = gMemcachedSockets.find(socket);
 	if(bufferIt == gMemcachedSockets.end()){
 		buf = new memcache_buffer(socket);
@@ -742,63 +737,87 @@ int memcached_thread(int socket){
 	DeleteFlag = 0;
 	switch(buf->getState()){
 	case memcache_buffer::state_set:
-		fprintf(stderr,"set!!\n");
+		//fprintf(stderr,"set!![%lld] ",gId);
+		
+		targetkey = new defkey(buf->tokens[SET_KEY].str,buf->tokens[SET_KEY].length);
+		targetvalue = new defvalue(buf->tokens[SET_VALUE].str,buf->tokens[SET_VALUE].length);
+		
 		//fprintf(stderr,"key:%s, value:%s, length:%s\n",buf->tokens[SET_KEY].str,buf->tokens[SET_VALUE].str,buf->tokens[SET_LENGTH].str);
 		
-		keylength = buf->tokens[SET_KEY].length;
-		memcpy(key,buf->tokens[SET_KEY].str,keylength);
-		valuelength = buf->tokens[SET_VALUE].length;
-		memcpy(value,buf->tokens[SET_VALUE].str,valuelength);
-		
-		fprintf(stderr,"keylen:%d, valuelen:%d\n",keylength,valuelength);
-		
-		dataindex = 0;
-		datalen = 1 + 4 + keylength + 4 + valuelength;
-		data = (char*)malloc(datalen);
-		data[dataindex++] = SetOp;
-		
-		intcaster = (int*)&data[dataindex];
-		*intcaster = keylength;
-		dataindex += 4;
-		memcpy(&data[dataindex],key,keylength);
-		dataindex += keylength;
-		
-		intcaster = (int*)&data[dataindex];
-		*intcaster = valuelength;
-		dataindex += 4;
-		memcpy(&data[dataindex],value,valuelength);
-		dataindex += valuelength;
-		assert(dataindex == datalen);
-		
-		targetaddress = search_from_addresslist(settings.myip,settings.myport);
-		send_to_address(targetaddress,data,datalen);
-		
-		
-		free(data);
+		// Build up list with memvership vector
+		targetnode = gNodeList.search_by_key(*targetkey);
+		if(targetnode->getKey() == *targetkey){
+			//already that key exists
+			targetnode->changeValue(*targetvalue);
+			delete targetkey;
+			delete targetvalue;
+			//fprintf(stderr,"not saved\n");
+			write(socket,"STORED\r\n",8);
+			buf->ParseOK();
+			break;
+		}
+		newnode = new sg_Node(*targetkey,*targetvalue);
 		
 		// search suspending socket
-		suspendIt = gSuspendSockets.find(socket);
-		if(suspendIt == gSuspendSockets.end()){
+		suspendIt = gStoreSuspend.find(*targetkey);
+		if(suspendIt == gStoreSuspend.end()){
 			newSuspend = new suspend<defkey,defvalue>(socket,2);
-			gSuspendSockets.insert(std::pair<int,suspend<defkey,defvalue>*>(socket,newSuspend));
+			gStoreSuspend.insert(std::pair<defkey,suspend<defkey,defvalue>*>(*targetkey,newSuspend));
+			//fprintf(stderr,"new suspend counter:%d\n",newSuspend->getCounter());
 		}else {
-			newSuspend = suspendIt->second;
+			newSuspend = suspendIt->second; // if exist, append new object.
 		}
 		newSuspend->add("STORED\r\n");
 		
+		//send the data
+		gNodeList.insert(newnode);
+		if(targetnode){
+			bufflen = create_treatop(&buff,targetnode->mId,targetkey,newnode->mId,myVector.mVector);
+			if(targetnode->mRight[0]){
+				send_to_address(targetnode->mRight[0]->mAddress,buff,bufflen);
+			}else if(targetnode->mLeft[0]){
+				send_to_address(targetnode->mLeft[0]->mAddress,buff,bufflen);
+			}else{
+				assert("bad node selected");
+			}
+		}else{
+			bufflen = create_treatop(&buff,0,targetkey,newnode->mId,myVector.mVector);
+			for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
+				if(AddressIt->mIP == settings.myip && gNodeList.empty()){
+					continue;
+				}
+				//fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
+				chklen = send_to_address(&*AddressIt,buff,bufflen);
+				if(chklen > 0){
+					//fprintf(stderr,"ok\n");
+					break;
+				}else{
+					//fprintf(stderr,"NG,try next address..\n");
+				}
+			}
+			if(chklen <= 0){
+				//fprintf(stderr,"\n All Address tried but failed.\n");
+			}
+		}
+		free(buff);
+		
+		delete targetkey;
+		delete targetvalue;
+		//gNodeList.print();
+
 		//gAsync_out.send(socket,"STORED\r\n",8);
 		
 		buf->ParseOK();
 		break;
 	case memcache_buffer::state_get:
-		fprintf(stderr,"get!!\n");
-		fprintf(stderr,"key:%s\n",buf->tokens[GET_KEY].str);
+		//fprintf(stderr,"get!!\n");
+		//fprintf(stderr,"key:%s\n",buf->tokens[GET_KEY].str);
 		
 		// search suspending socket
-		suspendIt = gSuspendSockets.find(socket);
-		if(suspendIt == gSuspendSockets.end()){
+		suspendIt = gStoreSuspend.find(socket);
+		if(suspendIt == gStoreSuspend.end()){
 			newSuspend = new suspend<defkey,defvalue>(socket);
-			gSuspendSockets.insert(std::pair<int,suspend<defkey,defvalue>*>(socket,newSuspend));
+			gStoreSuspend.insert(std::pair<defkey,suspend<defkey,defvalue>*>(socket,newSuspend));
 		}else {
 			newSuspend = suspendIt->second;
 		}
@@ -808,7 +827,7 @@ int memcached_thread(int socket){
 			targetkey = new defkey(buf->tokens[i].str);
 			
 			targetnode = gNodeList.search_by_key(*targetkey);
-			fprintf(stderr,"key:%s search\n",targetkey->toString());
+			//fprintf(stderr,"key:%s search\n",targetkey->toString());
 			if(targetnode->getKey() > *targetkey){ // not found!
 				fprintf(stderr,"nearest key:%s\n",targetnode->getKey().toString());
 				assert(!"arienai");
@@ -827,7 +846,7 @@ int memcached_thread(int socket){
 				newSuspend->add(*targetkey);
 			}else{
 				newSuspend->add(targetnode->getValue().mValue);
-				fprintf(stderr,"key:%s found\n",buf->tokens[i].str);
+				//fprintf(stderr,"key:%s found\n",buf->tokens[i].str);
 				newSuspend->add("\r\n");
 			}
 			delete targetkey;
@@ -835,7 +854,7 @@ int memcached_thread(int socket){
 		newSuspend->add("END\r\n");
 		
 		if(newSuspend->send_if_can() == true){
-			gSuspendSockets.erase(socket);
+			gStoreSuspend.erase(socket);
 			delete newSuspend;
 		}
 		
@@ -843,15 +862,16 @@ int memcached_thread(int socket){
 		break;
 		
 	case memcache_buffer::state_delete:
-		fprintf(stderr,"delete!!\n");
+		//fprintf(stderr,"delete!!\n");
 		buf->ParseOK();
 		break;
 	case memcache_buffer::state_close:
-		fprintf(stderr,"close!!\n");
+		//fprintf(stderr,"close!!\n");
 		delete buf;
 		gMemcachedSockets.erase(socket);
 		close(socket);
 		DeleteFlag = 1;
+		fprintf(stderr,"closed\n");
 		break;
 	case memcache_buffer::state_error:
 		fprintf(stderr,"error!!\n");
@@ -934,8 +954,8 @@ int main(int argc,char** argv){
 		sg_Node* minnode;
 		sg_Node* maxnode;
 		
-		minnode = gNodeList.set_to_graph(min,dummy);
-		maxnode = gNodeList.set_to_graph(max,dummy);
+		minnode = new sg_Node(min,dummy);
+		maxnode = new sg_Node(max,dummy);
 		// create left&right end
 		
 		sg_Neighbor *minpointer,*maxpointer;
@@ -1015,6 +1035,6 @@ void settings_init(void){
 	settings.memcacheport = 11211;
 	settings.targetip = 0;
 	settings.targetport = 10005;
-	settings.verbose = 3;
+	settings.verbose = 0;
 	settings.threads = 4;
 }

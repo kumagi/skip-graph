@@ -6,10 +6,12 @@
 #include <unistd.h>//write
 #include <assert.h>
 #include <stdio.h>//fprintf
+#define NDEBUG
 
 int natoi(char* str,int length){
 	int ans = 0;
 	while(length > 0){
+		//fprintf(stderr,"%d:%d,",length,*str);
 		assert('0' <= *str && *str <= '9' );
 		ans = ans * 10 + *str - '0';
 		str++;
@@ -28,7 +30,7 @@ memcache_buffer::memcache_buffer(int socket):mSocket(socket){
 	mCloseflag = 0;
 	mReft = mSize; // reft buffer
 	mBuff = (char*)malloc(mSize);
-	fprintf(stderr,"buffer initialized\n");
+	//fprintf(stderr,"buffer initialized\n");
 }
 memcache_buffer::~memcache_buffer(void){
 	free(mBuff);
@@ -37,6 +39,7 @@ memcache_buffer::~memcache_buffer(void){
 
 void memcache_buffer::ParseOK(void){
 	mState = state_free;
+	//fprintf(stderr,"parse OK, trying free buffer\n");
 	if(mChecked == mRead){
 		if(mSize > 128){
 			mBuff = (char*)realloc((void*)mBuff,128);
@@ -45,12 +48,14 @@ void memcache_buffer::ParseOK(void){
 		mSize = mReft = 128;
 		mState = state_free;
 		mBuff[0] = '\0';
+	}else{
+		//fprintf(stderr,"failed to free buffer read[%d] checked[%d]\n",mRead,mChecked);
 	}
 	if(mCloseflag == 1){
 		close(mSocket);
 		mState = state_close;
 	}
-	fprintf(stderr,"frried state mRead:%d mChecked:%d\n",mRead,mChecked);
+	//fprintf(stderr,"freed state mRead:%d mChecked:%d\n",mRead,mChecked);
 }
 	
 const int& memcache_buffer::getState(void) const{
@@ -63,7 +68,7 @@ const int& memcache_buffer::getSocket(void) const{
 
 int memcache_buffer::receive(void){
 	int newdata = 0;
-	int tokennum;
+	int tokennum = 0;
 	
 	switch(mState){
 	case state_free:
@@ -74,23 +79,21 @@ int memcache_buffer::receive(void){
 			mState = state_close;
 			break;
 		}
-		while(strncmp(&mBuff[mChecked],"\r\n",2) != 0 && mBuff[mChecked] != '\n' && mChecked < mRead){
+		
+		//fprintf(stderr,"before[%d]\n",mChecked);
+		while(strncmp(&mBuff[mChecked],"\r\n",2) != 0 && mChecked < mRead){
 			mChecked++;
 		}
+		//fprintf(stderr,"after[%d]\n",mChecked);
 		if(mChecked == mRead){
+			fprintf(stderr,"interpret:%d,mChecked=%d\n ",mBuff[mChecked],mChecked);
 			mState = state_continue;
 			break;
 		}
 		mBuff[mChecked] = '\0';
 		mBuff[mChecked+1] = '\0';
 		
-		/*
-		if (strncmp(&mBuff[mChecked],"\r\n",2) != 0){
-			mRead -= 2;
-		}else if (mBuff[mChecked] != '\n'){
-			mRead -= 1;
-		}
-		*/
+		//fprintf(stderr,"length:%d,[%s]\n",strlen(&mBuff[mStart]),&mBuff[mStart]);
 		tokennum = parse(&mBuff[mStart]);
 		mChecked += 2;
 		mStart = mChecked;
@@ -99,10 +102,10 @@ int memcache_buffer::receive(void){
 			break;
 		}
 	case state_value:
-		fprintf(stderr,"state value\n");
+		//fprintf(stderr,"state value\n");
 		newdata = readmax();
 		if (mRead - mStart < moreread){
-			fprintf(stderr,"value length unsatisfied\n");
+			//fprintf(stderr,"value length unsatisfied\n");
 			break;
 		}
 		
@@ -123,14 +126,13 @@ int memcache_buffer::receive(void){
 		tokens[SET_VALUE].str[moreread] = '\0';
 		mStart += moreread + 2;
 		mState = state_set;
-		
 		break;
 	default :
 		mRead = mChecked;
 		mState = state_free;
 		break;
 	}
-	fprintf(stderr,"next state:%d\n",mState);
+	//fprintf(stderr,"next state:%d\n",mState);
 	return tokennum;
 }
 
@@ -163,8 +165,8 @@ int memcache_buffer::readmax(void){
 	for(int i=0;i<mRead;i++){
 		fprintf(stderr,"%d,",mBuff[i]);
 	}
-	*/
-	fprintf(stderr,"\n");
+	//*/
+	//fprintf(stderr,"\n");
 	return totalread;
 }
 	
@@ -175,7 +177,8 @@ inline void memcache_buffer::string_write(char* string) const{
 }
 		
 inline int memcache_buffer::parse(char* start){
-	int cnt;
+	int cnt = 0;
+	//fprintf(stderr,"parse start[%s]\n",start);
 	if(strncmp(start,"set ",4) == 0){ // set [key] <flags> <exptime> <length>
 		start += 3;
 		mState = state_value;
@@ -186,7 +189,7 @@ inline int memcache_buffer::parse(char* start){
 			return cnt;
 		}
 		moreread = natoi(tokens[SET_LENGTH].str,tokens[SET_LENGTH].length);
-		fprintf(stderr,"waiting for value for %d length\n",moreread);
+		//fprintf(stderr,"waiting for value for %d length\n",moreread);
 	}else if(strncmp(start,"get ",4) == 0){ // get [key] ([key] ([key] ([key].......)))
 		mState = state_get;
 		start += 3;
@@ -195,13 +198,15 @@ inline int memcache_buffer::parse(char* start){
 		mState = state_delete;
 		start += 6;
 		cnt = read_tokens(start,8);
+	}else if(strncmp(start,"quit",4) == 0){ // quit
+		mState = state_close;
 	}else{
-		printf("operation:%s\n",start);
+		fprintf(stderr,"operation:%s\n",start);
 		assert(!"invalid operation\n");
 	}
 	return cnt;
 }
-		
+
 int memcache_buffer::read_tokens(char* str,int maxtokens){
 	int cnt;
 	for(int i=0; i<maxtokens; i++){

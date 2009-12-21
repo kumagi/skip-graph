@@ -13,6 +13,7 @@
 
 #define defkey strkey
 #define defvalue strvalue
+#define NDEBUG
 
 struct settings{
 	int myip;
@@ -25,7 +26,22 @@ struct settings{
 } settings;
 const char keyop = 7;
 
+enum Op{
+	SearchOp,
+	RangeOp,
+	FoundOp,
+	NotfoundOp,
+	SetOp,
+	LinkOp,
+	TreatOp,
+	IntroduceOp,
+	ViewOp,
+};
 
+enum Left_Right{
+	Left,
+	Right,
+};
 class address{
 public:
 	const int mIP;
@@ -360,6 +376,11 @@ public:
 		mValue = (char*)malloc(mLength+1);
 		strcpy(mValue,v);
 	}
+	strvalue(const char* v,const int len){
+		mLength = len;
+		mValue = (char*)malloc(mLength+1);
+		strcpy(mValue,v);
+	}
 	strvalue(const strvalue& v){
 		mLength = v.mLength;
 		mValue = (char*)malloc(mLength+1);
@@ -452,8 +473,8 @@ public:
 	sg_neighbor<KeyType>* mLeft[MAXLEVEL];
 	sg_neighbor<KeyType>* mRight[MAXLEVEL];
 	
-	sg_node(const KeyType& k,const ValueType& v,int socket)
-		:mKey(k),mValue(v),mInformer(socket),mId(gId++){
+	sg_node(const KeyType& k,const ValueType& v)
+		:mKey(k),mValue(v),mInformer(0),mId(gId++){
 		for(int i=0;i<MAXLEVEL;i++){
 			mLeft[i] = NULL;
 			mRight[i] = NULL;
@@ -629,13 +650,6 @@ public:
 			++it;
 		}
 	}
-	sg_Node* set_to_graph(const defkey& key, const defvalue& value, int responseSocket = 0){
-		sg_Node* newnode = new sg_node<KeyType,ValueType>(key,value,responseSocket);
-		TODO
-		
-		
-		return newnode;
-	}
 	void insert(sg_Node* newnode){//TODO
 		typename std::list<sg_Node*>::iterator it = nodeList.begin();
 		if(nodeList.empty()){
@@ -672,4 +686,24 @@ public:
 		return *it;
 	}
 };
+
+int create_treatop(char** buff,const long long targetId,const defkey* key, const long long myId, const long long vector){
+	int buffindex,bufflen;
+	buffindex = 0;
+	bufflen = 1+8+key->size()+4+8+2+8;
+	*buff = (char*)malloc(bufflen);
+	(*buff)[buffindex++] = TreatOp;
+		
+	serialize_longlong(*buff,&buffindex,targetId);
+	buffindex += key->Serialize(&(*buff)[buffindex]);
+	serialize_int(*buff,&buffindex,settings.myip);
+	serialize_longlong(*buff,&buffindex,myId);
+	serialize_short(*buff,&buffindex,settings.myport);
+	serialize_longlong(*buff,&buffindex,vector);
+	assert(bufflen == buffindex && "buffsize ok?");
+	
+	return bufflen;
+}
+
+
 #endif
