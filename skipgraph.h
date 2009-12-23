@@ -13,7 +13,6 @@
 
 #define defkey strkey
 #define defvalue strvalue
-#define NDEBUG
 
 struct settings{
 	int myip;
@@ -163,7 +162,7 @@ public :
 class strkey : public AbstractKey{
 public:
 	char *mKey;
-	int mLength;
+	unsigned int mLength;
 	strkey(){
 		mKey=NULL;
 		mLength=1;
@@ -186,10 +185,9 @@ public:
 		memcpy(mKey,k.mKey,mLength);
 		mKey[mLength] = '\0';
 	}
-	strkey(int k){
+	strkey(int tmpkey){
 		mKey = (char*)malloc(11);
 		mLength = 0;
-		int tmpkey = k;
 		int caster = 1000000000;
 		char* pchar = mKey;
 		if(tmpkey<0) {
@@ -247,6 +245,7 @@ public:
 		charptr = (char*)buf;
 		charptr += 4;
 		memcpy(charptr,mKey,mLength);
+		//fprintf(stderr,"$$[%d]$$",mLength+4);
 		return mLength + 4;
 	}
 	void Maximize(void){
@@ -582,7 +581,7 @@ inline void serialize_int(char* buff,int* offset,const int& data)
 	int* pint;
 	pint = (int*)&buff[*offset];
 	*pint = data;
-	*offset += sizeof(pint);
+	*offset += sizeof(int);
 }
 
 inline void serialize_short(char* buff,int* offset,const short& data)

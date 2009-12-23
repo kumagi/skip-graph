@@ -830,8 +830,8 @@ int memcached_thread(const int socket){
 			//fprintf(stderr,"key:%s search\n",targetkey->toString());
 			if(targetnode->getKey() > *targetkey){ // not found!
 				fprintf(stderr,"nearest key:%s\n",targetnode->getKey().toString());
-				assert(!"arienai");
 				//sending SearchOp
+				dataindex = 0;
 				datalen = 1 + 8 + 4 + buf->tokens[GET_KEY].length + 4 + 4 + 2;
 				data = (char*)malloc(datalen);
 				data[dataindex++] = SearchOp;
@@ -943,21 +943,23 @@ int main(int argc,char** argv){
 	}
 	settings.myip = chk_myip();
 	
+	// set accepting thread
+	int listening = create_tcpsocket();
+	set_reuse(listening);
+	bind_inaddr_any(listening,settings.myport);
+	listen(listening,2048);
+	mulio.SetAcceptSocket(listening);
+	mulio.SetCallback(main_thread);
+	mulio.run();// accept thread
 	
-	// set myself
-	if(settings.targetip != 0){ // join to the skip graph
-		fprintf(stderr,"send to %s:%d\n\n",my_ntoa(settings.targetip),settings.targetport);
-		targetsocket = create_tcpsocket();
-		newAddress = new address(targetsocket,settings.targetip,settings.targetport);
-		gAddressList.push_back(*newAddress);
-	}else{ // I am master
+	if(settings.targetip == 0){ // I am master
 		sg_Node* minnode;
 		sg_Node* maxnode;
 		
 		minnode = new sg_Node(min,dummy);
 		maxnode = new sg_Node(max,dummy);
-		// create left&right end
 		
+		// create left&right end
 		sg_Neighbor *minpointer,*maxpointer;
 		
 		myself = create_tcpsocket();
@@ -976,18 +978,13 @@ int main(int argc,char** argv){
 		gNodeList.insert(minnode);
 		gNodeList.insert(maxnode);
 		fprintf(stderr,"min:ID%lld  max:ID%lld level:%d\n",minnode->mId,maxnode->mId,MAXLEVEL);
+		
+		connect_port_ip(myself,settings.myip,settings.myport);
+		mulio.SetSocket(myself);
 	}
 	gNodeList.print();
-	// set accepting thread
-	int listening = create_tcpsocket();
-	set_reuse(listening);
-	bind_inaddr_any(listening,settings.myport);
-	listen(listening,2048);
-	mulio.SetAcceptSocket(listening);
-	mulio.SetCallback(main_thread);
-	mulio.run();// accept thread
 	
-	gAsync_out.run(2); // Asynchronous output manager
+	gAsync_out.run(2); // Asynchronous output manager with 2 threads
 	
 	int memcachesocket = create_tcpsocket();
 	set_reuse(memcachesocket);
@@ -1000,11 +997,14 @@ int main(int argc,char** argv){
 	pthread_create(&memcache_worker,NULL,memcached_work,NULL);
 	
 	if(settings.targetip != 0){
+		fprintf(stderr,"master is %s:%d\n\n",my_ntoa(settings.targetip),settings.targetport);
+		targetsocket = create_tcpsocket();
+		newAddress = new address(targetsocket,settings.targetip,settings.targetport);
+		gAddressList.push_back(*newAddress);
 		connect_port_ip(targetsocket,settings.targetip,settings.targetport);
 		mulio.SetSocket(targetsocket);
 	}else{
-		connect_port_ip(myself,settings.myip,settings.myport);
-		mulio.SetSocket(myself);
+		// set myself
 	}
 	
 	threads = (pthread_t*)malloc((settings.threads-1)*sizeof(pthread_t));

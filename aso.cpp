@@ -101,12 +101,10 @@ void aso::working(void){
 	while(1){
 		sem_wait(&works);
 		socket = fifo.front();
-		fprintf(stderr,"socket:%d work   queuesize:%d\n",socket,fifo.size());
 		fifo.pop();
 		elementIt = element_list.find(socket);
 		assert(elementIt != element_list.end());
 		queue = elementIt->second;
-		fprintf(stderr,"queue size:%d\n",queue->size());
 		do{
 			if(queue->front()->send() == 1){
 				delete &*queue->front();

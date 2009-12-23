@@ -45,7 +45,6 @@ class aso{
 protected:
 	struct epoll_event ev,events[MAX_WRITE_EPOLL];
 	int epollfd;
-	int self[2];
 	std::map<int,std::queue<aso_element*>* > element_list;
 	pthread_t* threads,epoller;
 	sem_t works;
