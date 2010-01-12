@@ -446,11 +446,6 @@ public:
 
 template<typename KeyType>
 class sg_neighbor{
-private:
-	
-	sg_neighbor(void);
-	sg_neighbor(const sg_neighbor&);
-	sg_neighbor& operator=(const sg_neighbor&);
 public:
 	const KeyType mKey;
 	const long long mId;
@@ -474,12 +469,6 @@ private:
 	KeyType mKey;
 	ValueType mValue;
 	suspend<KeyType,ValueType> mInformer;
-	
-	
-	// forbids copy
-	sg_node(void);
-	sg_node(const sg_node&);
-	sg_node& operator=(const sg_node&);
 public:
 	const long long mId;
 	sg_neighbor<KeyType>* mLeft[MAXLEVEL];
@@ -502,21 +491,7 @@ public:
 	void changeValue(const ValueType& v){
 		mValue = v;
 	}
-	void dump(void) const{
-		fprintf(stderr,"ID%lld:Key:%s\tValue:%s\n",mId,mKey.toString(),mValue.toString());
-		fprintf(stderr,"\tLeft : ");
-		for(int i=0;i<MAXLEVEL;i++){
-			if(mLeft[i]) fprintf(stderr," %s",mLeft[i]->mKey.toString());
-			else fprintf(stderr," None");
-		}
-		fprintf(stderr,"\n\tRight: ");
-		for(int i=0;i<MAXLEVEL;i++){
-			if(mRight[i]) fprintf(stderr," %s",mRight[i]->mKey.toString());
-			else fprintf(stderr," None");
-		}
-		fprintf(stderr,"\n");
-			
-	}
+	
 	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const
 	{
 		return mKey < rightside.mKey;
@@ -662,7 +637,17 @@ public:
 	void print(void){
 		typename std::list<sg_Node*>::iterator it = nodeList.begin();
 		while(it != nodeList.end() ){
-			(*it)->dump();
+			printf("%lld: key=%s  value=%s",(*it)->mId,(*it)->getKey().toString(),(*it)->getValue().toString());
+			if((*it)->mLeft[0]){
+				printf("  left=%s ",(*it)->mLeft[0]->mKey.toString());
+			}else{
+				printf("  left=no connect");
+			}
+			if((*it)->mRight[0]){
+				printf("  right=%s\n",(*it)->mRight[0]->mKey.toString());
+			}else{
+				printf("  right=no connect\n");
+			}
 			++it;
 		}
 	}
@@ -699,9 +684,6 @@ public:
 		while( it != nodeList.end() && (*it)->getKey() < key ){
 			++it;
 		}
-		if (it == nodeList.end()){
-			--it;
-		}
 		return *it;
 	}
 };
@@ -720,7 +702,6 @@ int create_treatop(char** buff,const long long targetId,const defkey* key, const
 	serialize_short(*buff,&buffindex,settings.myport);
 	serialize_longlong(*buff,&buffindex,vector);
 	assert(bufflen == buffindex && "buffsize ok?");
-	
 	
 	return bufflen;
 }

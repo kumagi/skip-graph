@@ -30,6 +30,13 @@
 //void* patient;
 #endif
 
+#define DEBUG_MODE
+#ifdef DEBUG_MODE
+#define DEBUG_OUT(...) fprintf(stderr,__VA_ARGS__)
+#else
+#define DEBUG_OUT(...)
+#endif
+
 
 typedef sg_neighbor<defkey> sg_Neighbor;
 typedef neighbor_list<defkey> neighbor_List;
@@ -40,7 +47,6 @@ neighbor_list<defkey> gNeighborList;
 node_list<defkey,defvalue> gNodeList;
 std::list<address> gAddressList;
 std::multimap<defkey,suspend<defkey,defvalue>*> gStoreSuspend;
-
 
 address* get_some_address(void){
 	std::list<address>::iterator it = gAddressList.begin();
@@ -53,13 +59,13 @@ address* get_some_address(void){
 }
 
 address* search_from_addresslist(int ip,unsigned short port){
-  std::list<address>::iterator it = gAddressList.begin();
-  for(;it!=gAddressList.end();it++){
-    if(it->mIP==ip && it->mPort==port){
-      return &*it;
-    }
-  }
-  return NULL;
+	std::list<address>::iterator it = gAddressList.begin();
+	for(;it!=gAddressList.end();it++){
+		if(it->mIP==ip && it->mPort==port){
+			return &*it;
+		}
+	}
+	return NULL;
 }
 
 address* add_new_address(const int socket,const int ip,const unsigned short port){
@@ -235,7 +241,7 @@ int main_thread(const int s){
 			break;
 		case LinkOp://id,key,originip,originid,originport,level,LorR
 			if(settings.verbose>1)
-				fprintf(stderr,"LinkOP");
+				fprintf(stderr,"LinkOP ");
 			
 			read(socket,&targetid,8);
 			targetnode = gNodeList.search_by_id(targetid);
@@ -253,6 +259,7 @@ int main_thread(const int s){
 				mulio.SetSocket(socket);
 			}
 			
+			DEBUG_OUT("target:%s from:%s\ttargetlevel:%d\n",targetnode->getKey().toString(),rKey.toString(),targetlevel);
 			
 			if(left_or_right == Left){
 				targetnode->mLeft[targetlevel] = gNeighborList.retrieve(rKey,originid,originaddress);
@@ -274,7 +281,7 @@ int main_thread(const int s){
 			if(settings.verbose>1)
 				fprintf(stderr,"target:%s from:%s   targetlevel:%d\n",targetnode->getKey().toString(),rKey.toString(),targetlevel);
 			
-			//EndFlag = 1;
+			EndFlag = 1;
 			break;
 		case FoundOp:
 			rKey.Receive(socket);
@@ -311,55 +318,6 @@ int main_thread(const int s){
 			if(targetnode->getKey() == rKey){
 				targetnode->changeValue(rValue);
 			}
-			//targetnode = gNodeList.set_to_graph(rKey,rValue,0);//the node to introduce to
-			/*
-			// Build up list with memvership vector
-			buffindex = 0;
-			bufflen = 1+8+newnode->getKey().size()+4+8+2+8;
-			buff = (char*)malloc(bufflen);
-			buff[buffindex++] = TreatOp;
-			
-			if(targetnode){
-				serialize_longlong(buff,&buffindex,targetnode->mId);
-			}else{
-				serialize_longlong(buff,&buffindex,0);
-			}
-			buffindex += newnode->getKey().Serialize(&buff[buffindex]);
-			serialize_int(buff,&buffindex,settings.myip);
-			serialize_longlong(buff,&buffindex,newnode->mId);
-			serialize_short(buff,&buffindex,settings.myport);
-			serialize_longlong(buff,&buffindex,myVector.mVector);
-			assert(bufflen == buffindex && "buffsize ok?");
-			chklen = 0;
-			if(targetnode){
-				if(targetnode->mRight[0]){
-					send_to_address(targetnode->mRight[0]->mAddress,buff,bufflen);
-				}else if(targetnode->mLeft[0]){
-					send_to_address(targetnode->mLeft[0]->mAddress,buff,bufflen);
-				}else{
-					assert("bad node selected");
-				}
-			}else {
-				for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
-					if(AddressIt->mIP == settings.myip && gNodeList.empty()){
-						continue;
-					}
-					//fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
-					chklen = send_to_address(&*AddressIt,buff,bufflen);
-					if(chklen > 0){
-						//fprintf(stderr,"ok\n");
-						break;
-					}else{
-						//fprintf(stderr,"NG,try next address..\n");
-					}
-				}
-			}
-			if(chklen <= 0){
-				fprintf(stderr,"\n All Address tried but failed.\n");
-			}
-			
-			free(buff);
-			*/
 			//fprintf(stderr,"key:%s ,value:%s set in ID:%lld\n",rKey.toString(),rValue.toString(),newnode->mId);
 			gNodeList.print();
 			//fprintf(stderr,"end of SetOP\n");
@@ -441,7 +399,6 @@ int main_thread(const int s){
 						//fprintf(stderr,"TreatOP to address %s:%d socket:%d\n",my_ntoa(targetnode->mLeft[targetlevel]->mAddress->mIP),targetnode->mLeft[targetlevel]->mAddress->mPort,targetnode->mLeft[targetlevel]->mAddress->mSocket);
 					}
 					
-					
 					free(buff);
 					EndFlag = 1;
 				}else{
@@ -451,7 +408,7 @@ int main_thread(const int s){
 					// begin treating new node
 					
 					//send IntroduceOP to opposite site
-					targetlevel = 0;
+					targetlevel = -1;
 					buffindex = 0;
 					bufflen = 1+8+rKey.size()+4+8+2+4+8;// [OP ID key originIP originID originPort level vector]
 					buff = (char*)malloc(bufflen);
@@ -463,6 +420,7 @@ int main_thread(const int s){
 						//fprintf(stderr,"target ID:%lld\n",targetnode->mRight[0]->mId);
 						serialize_longlong(buff,&buffindex,targetnode->mRight[0]->mId);
 					}else{
+						assert(!"arienai");
 						//fprintf(stderr,"no node to introduce from %s\n",targetnode->getKey().toString());
 					}
 					
@@ -470,7 +428,7 @@ int main_thread(const int s){
 					serialize_int(buff,&buffindex,originip);
 					serialize_longlong(buff,&buffindex,originid);
 					serialize_short(buff,&buffindex,originport);
-					serialize_int(buff,&buffindex,0);
+					serialize_int(buff,&buffindex,-1);
 					serialize_longlong(buff,&buffindex,originvector);
 					
 					assert(bufflen == buffindex);
@@ -511,7 +469,7 @@ int main_thread(const int s){
 						targetaddress = add_new_address(newsocket,originip,originport);
 						mulio.SetSocket(newsocket);
 					}
-					//fprintf(stderr,"LinkOP to address %s:%d socket:%d\n",my_ntoa(targetaddress->mIP),targetaddress->mPort,targetaddress->mSocket);
+					fprintf(stderr,"LinkOP to address %s:%d socket:%d\n",my_ntoa(targetaddress->mIP),targetaddress->mPort,targetaddress->mSocket);
 					
 					for(int i=0;i<=targetlevel;i++){
 						serialize_int(buff,&buffindex,i);
@@ -530,7 +488,6 @@ int main_thread(const int s){
 					}
 					free(buff);
 					
-					targetlevel++;
 					if(targetlevel < MAXLEVEL){
 						if((left_or_right == Left && targetnode->mRight[targetlevel] != NULL) ||
 						   (left_or_right == Right && targetnode->mLeft[targetlevel] != NULL)){
@@ -539,7 +496,7 @@ int main_thread(const int s){
 							buff = (char*)malloc(bufflen);
 							//serialize
 							buff[buffindex++] = IntroduceOp;
-							serialize_longlong(buff,&buffindex,originid);
+							serialize_longlong(buff,&buffindex,targetnode->mId);
 							buffindex += rKey.Serialize(&buff[buffindex]);
 							serialize_int(buff,&buffindex,originip);
 							serialize_longlong(buff,&buffindex,originid);
@@ -568,10 +525,10 @@ int main_thread(const int s){
 			read(socket,&targetid,8);
 			targetnode = gNodeList.search_by_id(targetid);
 			if(targetnode == NULL){
-				//fprintf(stderr,"there is no node such ID:%lld\n",targetid);
+				fprintf(stderr,"there is no node such ID:%lld\n",targetid);
 				break;
 			}
-			//fprintf(stderr,"found %lld key:%s\n",targetnode->mId,targetnode->getKey().toString());
+			fprintf(stderr,"found %lld key:%s\n",targetnode->mId,targetnode->getKey().toString());
 			
 			rKey.Receive(socket);
 			read(socket,&originip,4);
@@ -607,7 +564,7 @@ int main_thread(const int s){
 				targetaddress = add_new_address(newsocket,originip,originport);
 				mulio.SetSocket(newsocket);
 			}
-			for(int i=originlevel;i<=targetlevel;i++){
+			for(int i=originlevel+1;i<=targetlevel;i++){
 				serialize_int(buff,&buffindex,i);
 				buff[buffindex++] = left_or_right == Left ? Right : Left;
 				send_to_address(targetaddress,buff,bufflen);
@@ -618,11 +575,10 @@ int main_thread(const int s){
 				}else{
 					targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
 				}
-				//printf("Link from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
+				printf("Link from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
 			}
 			free(buff);
 			
-			targetlevel++;
 			if(targetlevel < MAXLEVEL){
 				if((left_or_right == Left && targetnode->mRight[targetlevel] != NULL) ||
 				   (left_or_right == Right && targetnode->mLeft[targetlevel] != NULL)){
@@ -649,7 +605,7 @@ int main_thread(const int s){
 						send_to_address(targetnode->mLeft[targetlevel]->mAddress,buff,bufflen);
 					}
 					free(buff);
-					/*
+					//*
 					if(left_or_right == Left && targetnode->mRight[targetlevel]){
 						fprintf(stderr,"relay IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
 					}else if(left_or_right == Right && targetnode->mLeft[targetlevel]){
@@ -658,8 +614,9 @@ int main_thread(const int s){
 						fprintf(stderr,"end of relay\n");
 					}
 					//*/
+				}else{
+					DEBUG_OUT("end of list\n");
 				}
-				
 			}
 			//fprintf(stderr,"end of Introduce Op\n");
 			EndFlag = 1;
@@ -678,7 +635,7 @@ int main_thread(const int s){
 	  fprintf(stderr,"socket:%d end\n",socket);
 	//*/
 	return DeleteFlag;
-}
+   }
 
 
 
@@ -737,16 +694,16 @@ int memcached_thread(const int socket){
 	DeleteFlag = 0;
 	switch(buf->getState()){
 	case memcache_buffer::state_set:
-		//fprintf(stderr,"set!![%lld] ",gId);
+		fprintf(stderr,"set!![%lld] ",gId);
 		
 		targetkey = new defkey(buf->tokens[SET_KEY].str,buf->tokens[SET_KEY].length);
 		targetvalue = new defvalue(buf->tokens[SET_VALUE].str,buf->tokens[SET_VALUE].length);
 		
-		//fprintf(stderr,"key:%s, value:%s, length:%s\n",buf->tokens[SET_KEY].str,buf->tokens[SET_VALUE].str,buf->tokens[SET_LENGTH].str);
+		fprintf(stderr,"key:%s, value:%s, length:%s\n",buf->tokens[SET_KEY].str,buf->tokens[SET_VALUE].str,buf->tokens[SET_LENGTH].str);
 		
 		// Build up list with memvership vector
-		targetnode = gNodeList.search_by_key(*targetkey);
-		if(targetnode->getKey() == *targetkey){
+		targetnode = gNodeList.search_by_key(*targetkey); // it finds nearest node
+		if(targetnode && targetnode->getKey() == *targetkey){
 			//already that key exists
 			targetnode->changeValue(*targetvalue);
 			delete targetkey;
@@ -763,50 +720,60 @@ int memcached_thread(const int socket){
 		if(suspendIt == gStoreSuspend.end()){
 			newSuspend = new suspend<defkey,defvalue>(socket,2);
 			gStoreSuspend.insert(std::pair<defkey,suspend<defkey,defvalue>*>(*targetkey,newSuspend));
-			//fprintf(stderr,"new suspend counter:%d\n",newSuspend->getCounter());
+			if (settings.verbose > 3){
+				fprintf(stderr,"new suspend counter:%d\n",newSuspend->getCounter());
+			}
 		}else {
 			newSuspend = suspendIt->second; // if exist, append new object.
 		}
 		newSuspend->add("STORED\r\n");
 		
+		/*
+		DEBUG_OUT("newnode:");
+		newnode->dump();
+		DEBUG_OUT("targetnode:");
+		if(targetnode)
+			targetnode->dump();
+		else 
+			DEBUG_OUT("none");
+		//*/
+		
 		//send the data
 		gNodeList.insert(newnode);
 		if(targetnode){
-			bufflen = create_treatop(&buff,targetnode->mId,targetkey,newnode->mId,myVector.mVector);
-			if(targetnode->mRight[0]){
+			bufflen = create_treatop(&buff,0,targetkey,newnode->mId,myVector.mVector);
+			DEBUG_OUT("target node:%lld\n",targetnode->mId);
+			if(targetnode->getKey() < *targetkey){
+				DEBUG_OUT("hoge\n");
 				send_to_address(targetnode->mRight[0]->mAddress,buff,bufflen);
-			}else if(targetnode->mLeft[0]){
-				send_to_address(targetnode->mLeft[0]->mAddress,buff,bufflen);
 			}else{
-				assert("bad node selected");
+				DEBUG_OUT("fuga\n");
+				send_to_address(targetnode->mLeft[0]->mAddress,buff,bufflen);
 			}
 		}else{
 			bufflen = create_treatop(&buff,0,targetkey,newnode->mId,myVector.mVector);
 			for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
 				if(AddressIt->mIP == settings.myip && gNodeList.empty()){
-					continue;
+					continue; // do not boomerang
 				}
-				//fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
+				fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
 				chklen = send_to_address(&*AddressIt,buff,bufflen);
 				if(chklen > 0){
-					//fprintf(stderr,"ok\n");
+					fprintf(stderr,"ok\n");
 					break;
 				}else{
-					//fprintf(stderr,"NG,try next address..\n");
+					fprintf(stderr,"NG,try next address..\n");
 				}
 			}
 			if(chklen <= 0){
-				//fprintf(stderr,"\n All Address tried but failed.\n");
+				fprintf(stderr,"\n All Address tried but failed.\n");
 			}
 		}
 		free(buff);
 		
 		delete targetkey;
 		delete targetvalue;
-		//gNodeList.print();
-
-		//gAsync_out.send(socket,"STORED\r\n",8);
-		
+		DEBUG_OUT("OK");
 		buf->ParseOK();
 		break;
 	case memcache_buffer::state_get:
@@ -865,6 +832,10 @@ int memcached_thread(const int socket){
 		//fprintf(stderr,"delete!!\n");
 		buf->ParseOK();
 		break;
+	case memcache_buffer::state_stats:
+		gNodeList.print();
+		buf->ParseOK();
+		break;
 	case memcache_buffer::state_close:
 		//fprintf(stderr,"close!!\n");
 		delete buf;
@@ -874,6 +845,9 @@ int memcached_thread(const int socket){
 		fprintf(stderr,"closed\n");
 		break;
 	case memcache_buffer::state_error:
+		int i = 0;
+		while(i < 5)
+			fprintf(stderr,"%d,",buf->tokens[0].str[i++]);
 		fprintf(stderr,"error!!\n");
 		gMemcachedSockets.erase(socket);
 		close(socket);
@@ -992,9 +966,9 @@ int main(int argc,char** argv){
 	listen(memcachesocket,2048);
 	memcached.SetAcceptSocket(memcachesocket);
 	memcached.SetCallback(memcached_thread);
-	memcached.run();
+	memcached.run();//memcached accept start.
 	pthread_t memcache_worker;
-	pthread_create(&memcache_worker,NULL,memcached_work,NULL);
+	pthread_create(&memcache_worker,NULL,memcached_work,NULL);//dispatch the worker
 	
 	if(settings.targetip != 0){
 		fprintf(stderr,"master is %s:%d\n\n",my_ntoa(settings.targetip),settings.targetport);
@@ -1018,6 +992,8 @@ int main(int argc,char** argv){
 			   settings.verbose,settings.threads,myVector.mVector);
 	}
 	
+	
+	printf("ok\n");
 	mulio.eventloop();
 }
 

@@ -28,6 +28,7 @@ public:
 		state_set,
 		state_get,
 		state_delete,
+		state_stats, // [stats] command 
 		state_value, // wait until n byte receive
 		state_continue, // not all data received
 		state_close,

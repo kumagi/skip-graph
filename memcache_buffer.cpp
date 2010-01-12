@@ -6,7 +6,9 @@
 #include <unistd.h>//write
 #include <assert.h>
 #include <stdio.h>//fprintf
-#define NDEBUG
+//#define NDEBUG
+
+static const char interrupt[] = {-1,-12,-1,-3,6};
 
 int natoi(char* str,int length){
 	int ans = 0;
@@ -86,6 +88,10 @@ int memcache_buffer::receive(void){
 		}
 		//fprintf(stderr,"after[%d]\n",mChecked);
 		if(mChecked == mRead){
+			if(strncmp(&mBuff[mStart],interrupt,5) == 0 || strncmp(&mBuff[mChecked-5],interrupt,5)){
+				mState = state_close;
+				break;
+			}
 			fprintf(stderr,"interpret:%d,mChecked=%d\n ",mBuff[mChecked],mChecked);
 			mState = state_continue;
 			break;
@@ -198,11 +204,14 @@ inline int memcache_buffer::parse(char* start){
 		mState = state_delete;
 		start += 6;
 		cnt = read_tokens(start,8);
+	}else if(strncmp(start,"stats",4) == 0){ // stats
+		mState = state_stats;
 	}else if(strncmp(start,"quit",4) == 0){ // quit
 		mState = state_close;
 	}else{
 		fprintf(stderr,"operation:%s\n",start);
-		assert(!"invalid operation\n");
+		mState = state_error;
+		//assert(!"invalid operation\n");
 	}
 	return cnt;
 }
