@@ -7,6 +7,10 @@ enum memcache_buffer_constants{
 	SET_LENGTH = 3,
 	SET_VALUE = 4,
 	GET_KEY = 0,
+	RGET_BEGIN = 0,
+	RGET_END = 1,
+	RGET_LEFT_CLOSED = 2,
+	RGET_RIGHT_CLOSED = 3,
 	DELETE_KEY = 0,
 };
 
@@ -27,6 +31,7 @@ public:
 		state_free,
 		state_set,
 		state_get,
+		state_rget,
 		state_delete,
 		state_stats, // [stats] command 
 		state_value, // wait until n byte receive

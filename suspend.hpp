@@ -14,21 +14,49 @@ public:
 	virtual ~node(void) {};
 };
 
+namespace localfunc{
+	char* itoa(unsigned int data){
+		static char string[10];
+		unsigned int caster = 1000000000;
+		char* pchar = string;
+		while(data/caster == 0) {
+			caster /= 10;
+		}
+		while(data > 0){
+			*pchar++ = data/caster + '0';
+			data = data%caster;
+			caster /= 10;
+		}
+		*pchar = '\0';
+		return string;
+	}
+};
+// key / value pair
 template <typename keytype,typename valuetype>
 class node_kvp : public node {
 private:
 	const keytype key;
+	
+	node_kvp(void);
+	node_kvp(const node_kvp&);
+	node_kvp& operator=(const node_kvp&);
 public:
 	valuetype value;
 	node_kvp(const keytype& k):key(k){ }
 	node_kvp(const keytype& k,const valuetype& v):key(k),value(v){ }
-	node_kvp(const node_kvp& k):key(k.key),value(k.value){ }
+	//node_kvp(const node_kvp& k):key(k.key),value(k.value){ }
 	
 	int send(const int socket) const{
 		int sentlength = 0;
+		char* string;
 		if(value.mValue != NULL){
-			sentlength = write(socket,value.mValue,value.mLength);
-			assert(sentlength == value.mLength);
+			sentlength = write(socket,key.mKey,key.mLength);
+			sentlength += write(socket," 0 ",3);
+			string = localfunc::itoa(value.mLength);
+			sentlength += write(socket,string,strlen(string));
+			sentlength += write(socket,"\r\n",2);
+			sentlength += write(socket,value.mValue,value.mLength);
+			sentlength += write(socket,"\r\n",2);
 			//fprintf(stderr,"send %d bytes[%s]\n",sentlength,value.mValue);
 		}
 		return sentlength;
@@ -51,16 +79,18 @@ public:
 	}
 };
 
+// plane string
 class node_str : public node{
 private:
 	int length;
 	char* str;
+	
+	node_str(void);
+	node_str(const node_str&);
+	node_str& operator=(const node_str&);
 public:
 	node_str(const char* s):length(strlen(s)),str((char*)malloc(length+1)){
 		strcpy(str,s);
-	}
-	node_str(const node_str& s):length(s.length),str((char*)malloc(length+1)){
-		strcpy(str,s.str);
 	}
 	
 	int send(const int socket) const{
@@ -122,11 +152,17 @@ public:
 		++counter;
 		suspend_list.push_back(new node_kvp<keytype,valuetype>(key));
 	}
+	inline void add(const int data){
+		suspend_list.push_back(new node_str(localfunc::itoa(data)));
+	}
 	inline void add(const char* c){
 		suspend_list.push_back(new node_str(c));
 	}
-	inline const int getCounter(void){
+	inline const int getCounter(void) const{
 		return counter;
+	}
+	inline void addCounter(const int cnt){
+		counter += cnt;
 	}
 	
 	inline void receive_value(const int socket,const keytype key){

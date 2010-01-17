@@ -3,6 +3,7 @@
 #define MAXLEVEL 8
 #include "mytcplib.h"
 #include "suspend.hpp"
+#include "MurmurHash2A.cpp"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #include <vector>
 #include <list>
 #include <set>
+#include <map>
 
 #define defkey strkey
 #define defvalue strvalue
@@ -293,23 +295,36 @@ public:
 	}
 	bool operator<(const strkey& right) const {
 		if(!isMaximum() && right.isMaximum() || isMinimum() && !right.isMinimum()) {
-			return 1;
+			return true;
 		}else if(isMaximum() || right.isMinimum()){
-			return 0;
+			return false;
 		}
 		return strcmp(mKey,right.mKey) < 0;
 	}
 	bool operator>(const strkey& right) const {
 		if(!isMinimum() && right.isMinimum() || isMaximum() && !right.isMaximum()) {
-			return 1;
+			return true;
 		}else if(isMinimum() || right.isMaximum()){
-			return 0;
+			return false;
 		}
 		//fprintf(stderr,"%s > %s ?\n",toString(),right.toString());
 		return strcmp(mKey,right.mKey) > 0;
 	}
 	bool operator==(const strkey& right) const{
+		if((isMinimum() && right.isMinimum()) || isMaximum() && right.isMaximum()){
+			return true;
+		}
 		return (mLength == right.mLength) && (strncmp(mKey,right.mKey,mLength) == 0); 
+	}
+	strkey& operator=(const strkey& rhs) {
+		if(mKey != NULL){
+			free(mKey);
+		}
+		mLength = rhs.mLength;
+		mKey = (char*)malloc(rhs.mLength+1);
+		strcpy(mKey,rhs.mKey);
+		mKey[mLength] = '\0';
+		return *this;
 	}
 };
 class AbstractValue{
@@ -367,7 +382,7 @@ public :
 class strvalue : public AbstractValue{
 public:
 	char* mValue;
-	int mLength;
+	unsigned int mLength;
 	strvalue(void) {
 		mValue = NULL;
 		mLength = 0;
@@ -440,7 +455,7 @@ public:
 		return mValue;
 	}
 	int size(void) const {
-		return mLength;
+		return mLength + 4; 
 	}
 };
 
@@ -448,7 +463,9 @@ template<typename KeyType>
 class sg_neighbor{
 private:
 	
+	
 	sg_neighbor(void);
+	// disable to copy
 	sg_neighbor(const sg_neighbor&);
 	sg_neighbor& operator=(const sg_neighbor&);
 public:
@@ -473,8 +490,6 @@ class sg_node{
 private:
 	KeyType mKey;
 	ValueType mValue;
-	suspend<KeyType,ValueType> mInformer;
-	
 	
 	// forbids copy
 	sg_node(void);
@@ -486,7 +501,7 @@ public:
 	sg_neighbor<KeyType>* mRight[MAXLEVEL];
 	
 	sg_node(const KeyType& k,const ValueType& v)
-		:mKey(k),mValue(v),mInformer(0),mId(gId++){
+		:mKey(k),mValue(v),mId(gId++){
 		for(int i=0;i<MAXLEVEL;i++){
 			mLeft[i] = NULL;
 			mRight[i] = NULL;
@@ -666,7 +681,10 @@ public:
 			++it;
 		}
 	}
-	void insert(sg_Node* newnode){//TODO
+	unsigned int size(void) const {
+		return nodeList.size();
+	}
+	void insert(sg_Node* newnode){
 		typename std::list<sg_Node*>::iterator it = nodeList.begin();
 		if(nodeList.empty()){
 			nodeList.push_back(newnode);
@@ -691,7 +709,7 @@ public:
 		}
 		return NULL;
 	}
-	sg_Node* search_by_key(const KeyType& key){// it may returns nearest neighbor
+	sg_Node* search_by_key(const KeyType& key){// it may  neighbor
 		if(nodeList.empty()){
 			return NULL;
 		}
@@ -705,6 +723,110 @@ public:
 		return *it;
 	}
 };
+
+template<typename Keytype,typename Valuetype>
+class suspend_list{
+private:
+	typedef suspend<Keytype,Valuetype> Suspend; 
+	
+	class entry{
+	private:
+		int socket;
+		std::list<Keytype> key;
+		Suspend sus;
+	public:
+		entry(const int sock,const int counter):socket(sock),sus(sock,counter){
+			key.clear();
+		};
+		inline Suspend& getSuspend(void) {
+			return this->sus;
+		}
+		inline std::list<Keytype>& getKeyList(void){
+			return this->key;
+		}
+		int getSocket(void) const {
+			return this->socket;
+		}
+	};
+	
+	std::list<entry*> mList; // raw data
+	
+	std::multimap<int, entry*> mSocketMap;
+	std::multimap<Keytype, entry*> mKeyMap;
+	
+	// disable copy
+	suspend_list(const suspend_list<Keytype,Valuetype>&);
+	suspend_list<Keytype,Valuetype>& operator=(const suspend_list<Keytype,Valuetype>&);
+public:
+	suspend_list(void){
+		mList.clear();
+	}
+	Suspend* search(const int socket) {
+		typename std::multimap<int, entry*>::iterator it = mSocketMap.find(socket);
+		if(it != mSocketMap.end()){
+			return &mSocketMap.find(socket)->second->getSuspend();
+		}else{
+			return NULL;
+		}
+	}
+	Suspend* search(const Keytype& key) {
+		typename std::multimap<Keytype, entry*>::iterator it = mKeyMap.find(key);
+		if(it != mKeyMap.end()){
+			return &mKeyMap.find(key)->second->getSuspend();
+		}else{
+			return NULL;
+		}
+	}
+	Suspend* add_or_retrieve(const int socket, const int counter=0){
+		typename std::multimap<int, entry*>::iterator it = mSocketMap.find(socket);
+		entry* newEntry;
+		if(it != mSocketMap.end()){ // exists
+			newEntry = it->second;
+			newEntry->getSuspend().addCounter(counter);
+		}else{
+			newEntry = new entry(socket,counter);
+			mSocketMap.insert(std::pair<int,entry*>(socket,newEntry));
+		}
+		return &newEntry->getSuspend();
+	}
+	Suspend* setKey(const int socket, const Keytype& key){
+		typename std::multimap<int, entry*>::iterator it = mSocketMap.find(socket);
+		entry* foundEntry;
+		if(it != mSocketMap.end()){ // exists
+			foundEntry = it->second;
+			foundEntry->getKeyList().push_back(key);
+			mKeyMap.insert(std::pair<Keytype,entry*>(key,foundEntry));
+			return &foundEntry->getSuspend();
+		}else {
+			return NULL;
+		}
+	}
+		
+	void erase(const Keytype& key){
+		typename std::multimap<Keytype, entry*>::iterator it = mKeyMap.find(key);
+		if(it != mKeyMap.end()){
+			typename std::multimap<int, entry*>::iterator sockIt = mSocketMap.find(it->second->getSocket());
+			typename std::list<Keytype>::iterator keyIt = sockIt->second->getKeyList().begin();
+			while(keyIt != sockIt->second->getKeyList().end()){
+				mKeyMap.erase(*keyIt);
+				++keyIt;
+			}
+			mSocketMap.erase(sockIt->first);
+			delete sockIt->second;
+		}
+	}
+};
+int send_to_address(const address* ad,const char* buff,const int bufflen){
+	int sendsize;
+	assert(ad->mSocket != 0);
+	
+	sendsize = write(ad->mSocket,buff,bufflen);
+	if(sendsize<=0){
+		//fprintf(stderr,"send_to_address:failed to write %d\n",ad->mSocket);
+		exit(0);
+	}
+	return sendsize;
+}
 
 int create_treatop(char** buff,const long long targetId,const defkey* key, const long long myId, const long long vector){
 	int buffindex,bufflen;
@@ -723,6 +845,31 @@ int create_treatop(char** buff,const long long targetId,const defkey* key, const
 	
 	
 	return bufflen;
+}
+
+void print_range(const AbstractKey& begin,const AbstractKey& end,const char left_closed,const char right_closed){
+	fprintf(stderr,"%s%s-%s%s",left_closed==1 ?"[":"(",begin.toString(),end.toString(),right_closed==1?"]":")");
+}
+void range_forward(const unsigned int level,const long long targetid,const address& ad,const AbstractKey& begin,const AbstractKey& end,const char left_closed,const char right_closed,const int originip, const unsigned short originport){
+	const int bufflen = 1 + 8 + 4 + begin.size() + end.size() + 1 + 1 + 4 + 2;
+	int buffindex = 0;
+	char* buff = (char*)malloc(bufflen);
+	
+	print_range(begin,end,left_closed,right_closed);
+	fprintf(stderr," in level:%d\n",level);
+	
+	buff[buffindex++] = RangeOp;
+	serialize_longlong(buff,&buffindex,targetid);
+	serialize_int(buff,&buffindex,level);
+	buffindex += begin.Serialize(&(buff[buffindex]));
+	buffindex += end.Serialize(&(buff[buffindex]));
+	buff[buffindex++] = left_closed;
+	buff[buffindex++] = right_closed;
+	serialize_int(buff,&buffindex,originip);
+	serialize_short(buff,&buffindex,originport);
+	assert(buffindex == bufflen);
+	send_to_address(&ad,buff,buffindex);
+	free(buff);
 }
 
 

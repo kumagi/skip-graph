@@ -42,11 +42,10 @@ int connect_port_ip(const int socket,const int ip,const unsigned short port){
 int connect_send_close(const int ip,const unsigned short port,const void* buff,const size_t bufflen){
 	// return how many bytes sent
 	int socket = create_tcpsocket();
-	int flag;
 	set_linger(socket);
 	
-	flag = connect_port_ip(socket,ip,port);
-	if(flag) {
+	int success = connect_port_ip(socket,ip,port);
+	if(success) {
 		return 0;
 	}
 	size_t postsend=0,tmpsend;

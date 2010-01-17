@@ -199,7 +199,11 @@ inline int memcache_buffer::parse(char* start){
 	}else if(strncmp(start,"get ",4) == 0){ // get [key] ([key] ([key] ([key].......)))
 		mState = state_get;
 		start += 3;
-		cnt = read_tokens(start,8);
+		cnt = read_tokens(start,30);
+	}else if(strncmp(start,"rget ",5) == 0){ // rget [beginkey] [endkey] [left_closed] [right_closed]
+		mState = state_rget;
+		start += 4;
+		cnt = read_tokens(start,4);
 	}else if(strncmp(start,"delete ",7) == 0){ // delete [key] ([key] ([key] ([key].......)))
 		mState = state_delete;
 		start += 6;
@@ -216,7 +220,8 @@ inline int memcache_buffer::parse(char* start){
 	return cnt;
 }
 
-int memcache_buffer::read_tokens(char* str,int maxtokens){
+// it measures \0 to \0
+int memcache_buffer::read_tokens(char* str,const int maxtokens){
 	int cnt;
 	for(int i=0; i<maxtokens; i++){
 		// get head of token
@@ -237,6 +242,7 @@ int memcache_buffer::read_tokens(char* str,int maxtokens){
 		if(*str == '\0'){
 			return i+1;
 		}
+		*str++ = '\0'; // delimiter
 	}
 	return maxtokens;
 }
