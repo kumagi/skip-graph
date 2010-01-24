@@ -1,6 +1,6 @@
 #ifndef SKIPGRAPH
 #define SKIPGRAPH
-#define MAXLEVEL 8
+#define MAXLEVEL 4
 #include "mytcplib.h"
 #include "suspend.hpp"
 #include "MurmurHash2A.cpp"
@@ -45,6 +45,11 @@ enum Left_Right{
 	Left,
 	Right,
 };
+enum closed_opened{
+	Opened,
+	Closed,
+};
+
 class address{
 public:
 	const int mIP;
@@ -544,7 +549,6 @@ unsigned int sysrand(void){
 	FILE* fp = fopen("/dev/random","r");
 	int random;
 	fread(&random,4,1,fp);
-	printf("random:%d\n",random);
 	return random;
 }
 long long int rand64(void){
@@ -602,6 +606,9 @@ public:
 	}
 	membership_vector(void){
 		init();
+	}
+	operator const long long(){
+		return mVector;
 	}
 	bool operator==(membership_vector rightside){
 		return mVector == rightside.mVector;
@@ -843,14 +850,59 @@ int create_treatop(char** buff,const long long targetId,const defkey* key, const
 	serialize_longlong(*buff,&buffindex,vector);
 	assert(bufflen == buffindex && "buffsize ok?");
 	
-	
 	return bufflen;
 }
+int send_linkop(const address& aAddress,const long long& targetid,const strkey& originkey,const long long originid,int targetlevel,char left_or_right){
+	int buffindex=0;
+	int bufflen = 1+8+originkey.size()+4+8+2+4+1;
+	char* buff = (char*)malloc(bufflen);
+	buffindex = 0;
+	//serialize
+	buff[buffindex++] = LinkOp;
+	serialize_longlong(buff,&buffindex,targetid);
+	buffindex += originkey.Serialize(&buff[buffindex]);
+	serialize_int(buff,&buffindex,settings.myip);
+	serialize_longlong(buff,&buffindex,originid);
+	serialize_short(buff,&buffindex,settings.myport);
+	serialize_int(buff,&buffindex,targetlevel);
+	buff[buffindex++] = left_or_right;
+	assert(buffindex == bufflen);
+	int sentsize = send_to_address(&aAddress,buff,bufflen);
+	if(sentsize<0){
+		fprintf(stderr,"could not send LinkOP\n");
+	}
+	free(buff);
+	return sentsize;
+}
+int send_introduceop(const address& aAddress,const long long targetid,const strkey& originkey,const long long originid,const int originip, const short originport, const int targetlevel, const long long originvector){
+	int buffindex=0;
+	int bufflen = 1+8+originkey.size()+4+8+2+4+8;
+	char* buff = (char*)malloc(bufflen);
+	
+	
+	buff[buffindex++] = IntroduceOp;
+	serialize_longlong(buff,&buffindex,targetid);
+	buffindex += originkey.Serialize(&buff[buffindex]);
+	serialize_int(buff,&buffindex,originip);
+	serialize_longlong(buff,&buffindex,originid);
+	serialize_short(buff,&buffindex,originport);
+	serialize_int(buff,&buffindex,targetlevel);
+	serialize_longlong(buff,&buffindex,originvector);
+	
+	assert(bufflen==buffindex);
+	int sentsize = send_to_address(&aAddress,buff,bufflen);
+	if(sentsize<0){
+		fprintf(stderr,"could not send LinkOP\n");
+	}
+	free(buff);
+	return sentsize;
+}
+
 
 void print_range(const AbstractKey& begin,const AbstractKey& end,const char left_closed,const char right_closed){
 	fprintf(stderr,"%s%s-%s%s",left_closed==1 ?"[":"(",begin.toString(),end.toString(),right_closed==1?"]":")");
 }
-void range_forward(const unsigned int level,const long long targetid,const address& ad,const AbstractKey& begin,const AbstractKey& end,const char left_closed,const char right_closed,const int originip, const unsigned short originport){
+void range_forward(const unsigned int level,const long long targetid,const address& ad,const strkey& begin,const strkey& end,const char left_closed,const char right_closed,const int originip, const unsigned short originport){
 	const int bufflen = 1 + 8 + 4 + begin.size() + end.size() + 1 + 1 + 4 + 2;
 	int buffindex = 0;
 	char* buff = (char*)malloc(bufflen);
@@ -872,5 +924,13 @@ void range_forward(const unsigned int level,const long long targetid,const addre
 	free(buff);
 }
 
+
+// get left or right
+char direction(const strkey& fromKey ,const strkey& toKey){
+	return fromKey < toKey ? Right : Left;
+}
+char inverse(const char left_or_right){
+	return left_or_right == Left ? Right : Left; 
+}
 
 #endif
