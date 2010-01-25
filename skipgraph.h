@@ -1,5 +1,6 @@
 #ifndef SKIPGRAPH
 #define SKIPGRAPH
+#define NDEBUG
 #define MAXLEVEL 4
 #include "mytcplib.h"
 #include "suspend.hpp"
@@ -892,7 +893,7 @@ int send_introduceop(const address& aAddress,const long long targetid,const strk
 	assert(bufflen==buffindex);
 	int sentsize = send_to_address(&aAddress,buff,bufflen);
 	if(sentsize<0){
-		fprintf(stderr,"could not send LinkOP\n");
+		fprintf(stderr,"could not send introduceOP\n");
 	}
 	free(buff);
 	return sentsize;
@@ -907,8 +908,10 @@ void range_forward(const unsigned int level,const long long targetid,const addre
 	int buffindex = 0;
 	char* buff = (char*)malloc(bufflen);
 	
-	print_range(begin,end,left_closed,right_closed);
-	fprintf(stderr," in level:%d\n",level);
+	if(settings.verbose > 3){
+		print_range(begin,end,left_closed,right_closed);
+		fprintf(stderr," in level:%d\n",level);
+	}
 	
 	buff[buffindex++] = RangeOp;
 	serialize_longlong(buff,&buffindex,targetid);

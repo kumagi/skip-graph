@@ -29,7 +29,7 @@
 //void* patient;
 #endif
 
-#define DEBUG_MODE
+//#define DEBUG_MODE
 #ifdef DEBUG_MODE
 #define DEBUG_OUT(...) fprintf(stderr,__VA_ARGS__)
 #else
@@ -259,9 +259,11 @@ int main_thread(const int s){
 			read(socket,&targetip,4);
 			read(socket,&targetport,2);
 			
-			DEBUG_OUT("received range ");
-			print_range(rKey,sKey,left_closed,right_closed);
-			DEBUG_OUT(" myKey:%s level:%d ",targetnode->getKey().toString(),targetlevel);
+			if(settings.verbose > 4){
+				DEBUG_OUT("received range ");
+				print_range(rKey,sKey,left_closed,right_closed);
+				DEBUG_OUT(" myKey:%s level:%d ",targetnode->getKey().toString(),targetlevel);
+			}
 			
 			if((rKey < targetnode->getKey()) && (targetnode->getKey() < sKey) ||
 			   (left_closed && rKey == targetnode->getKey() || (right_closed && sKey == targetnode->getKey()))){ // if this key is in range
@@ -635,20 +637,20 @@ int main_thread(const int s){
 				for(int i=originlevel+1;i<=targetlevel;i++){
 					send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,Right);
 					targetnode->mLeft[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
-					printf("Link to rightside from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
+					DEBUG_OUT("Link to rightside from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
 				}
 			}else{
 				for(int i=originlevel+1;i<=targetlevel;i++){
 					send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,Left);
 					targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
-					printf("Link to leftside from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
+					DEBUG_OUT("Link to leftside from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetaddress->mSocket);
 				}
 			}
 			
 			if(targetlevel < MAXLEVEL-1){
 				if(left_or_right == Left){
 					if(targetnode->mRight[targetlevel]){
-						fprintf(stderr,"relay IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
+						DEBUG_OUT("relay IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
 						send_introduceop(*targetnode->mRight[targetlevel]->mAddress,targetnode->mRight[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
 					}else{
 						DEBUG_OUT("end of rightside\n");
@@ -742,8 +744,8 @@ int memcached_thread(const int socket){
 		
 		targetkey = new defkey(buf->tokens[SET_KEY].str,buf->tokens[SET_KEY].length);
 		targetvalue = new defvalue(buf->tokens[SET_VALUE].str,buf->tokens[SET_VALUE].length);
-		
-		fprintf(stderr,"key:%s, value:%s, length:%s\n",buf->tokens[SET_KEY].str,buf->tokens[SET_VALUE].str,buf->tokens[SET_LENGTH].str);
+		if(settings.verbose > 1)
+			fprintf(stderr,"key:%s, value:%s, length:%s\n",buf->tokens[SET_KEY].str,buf->tokens[SET_VALUE].str,buf->tokens[SET_LENGTH].str);
 		
 		// Build up list with memvership vector
 		targetnode = gNodeList.search_by_key(*targetkey); // it finds nearest node
@@ -782,13 +784,13 @@ int memcached_thread(const int socket){
 				if(AddressIt->mIP == settings.myip && gNodeList.empty()){
 					continue; // do not boomerang
 				}
-				fprintf(stderr,"trying:%s .. ",my_ntoa(AddressIt->mIP));
+				DEBUG_OUT("trying:%s .. ",my_ntoa(AddressIt->mIP));
 				chklen = send_to_address(&*AddressIt,buff,bufflen);
 				if(chklen > 0){
-					fprintf(stderr,"ok  ");
+					DEBUG_OUT("ok  ");
 					break;
 				}else{
-					fprintf(stderr,"NG,try next address..\n");
+					DEBUG_OUT("NG,try next address..\n");
 				}
 			}
 			if(chklen <= 0){
@@ -812,7 +814,8 @@ int memcached_thread(const int socket){
 			targetnode = gNodeList.search_by_key(*targetkey);
 			
 			if(targetnode->getKey() > *targetkey){ // not found! search for other node
-				fprintf(stderr,"nearest key:%s\n",targetnode->getKey().toString());
+				if(settings.verbose > 3)
+					fprintf(stderr,"nearest key:%s\n",targetnode->getKey().toString());
 				//sending SearchOp
 				dataindex = 0;
 				datalen = 1 + 8 + 4 + buf->tokens[i].length + 4 + 4 + 2;
@@ -881,7 +884,8 @@ int memcached_thread(const int socket){
 		gMemcachedSockets.erase(socket);
 		close(socket);
 		DeleteFlag = 1;
-		fprintf(stderr,"closed\n");
+		if(settings.verbose > 2)
+			fprintf(stderr,"closed\n");
 		break;
 	case memcache_buffer::state_error:
 		int i = 0;
@@ -902,7 +906,8 @@ void* worker(void* arg){
 	return NULL;
 }
 void* memcached_work(void* arg){
-	fprintf(stderr,"memcached thread start\n");
+	if(settings.verbose > 2)
+		fprintf(stderr,"memcached thread start\n");
 	memcached.eventloop();
 	return NULL;
 }
