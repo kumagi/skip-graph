@@ -32,7 +32,9 @@ enum Op{
 	SearchOp,
 	RangeOp,
 	FoundOp,
+	RangeFoundOp,
 	NotfoundOp,
+	RangeNotFoundOp,
 	SetOp,
 	LinkOp,
 	TreatOp,
@@ -732,6 +734,333 @@ public:
 	}
 };
 
+
+// devided board to completeclass devided {
+
+class devided {
+private:
+	unsigned long long mData;
+	
+	void merge(devided* data){
+		merge(&data->mData);
+	}
+	void merge(unsigned long long* data){
+		unsigned long long hit = mData & *data;
+		if(!hit){
+			mData |= *data;
+			*data = 0;
+			return;
+		}
+		if((hit & (hit-1)) == 0){ // 1 bit only
+			mData ^= hit;
+			hit >>=  1;
+			merge(&hit);
+			return;
+		}
+		assert(!"dont merge midway data each other.\n");
+	}
+public:
+	devided(void):mData(1){ }
+	bool isComplete(void) const{
+		return mData == 1;
+	}
+	void dump(void) const {
+		fprintf(stderr,"0x%llx\n",mData);
+	}
+	void setZero(void){
+		mData = 0;
+	}
+	void init(void){
+		mData = 1;
+	}
+	void receive(const int socket){
+		read(socket,&mData,sizeof(devided));
+	}
+	int Serialize(char* buff) const {
+		long long* longptr = (long long*)buff;
+		*longptr = mData;
+		return 8;
+	}
+ 	devided& operator/=(devided& rhs){
+		assert(mData == 1);
+		rhs.mData <<= 1;
+		mData = rhs.mData;
+		return *this;
+	}
+	devided& operator+=(devided& rhs){
+		merge(&rhs);
+		return *this;
+	}
+	unsigned int size(void) const{
+		return sizeof(long long int);
+	}
+};
+
+// range query identifier
+class range_query{ // [length] [beginkey] [endkey] [begin_closed] [end_closed] [devided_tag] with string
+private:
+	char* mQuery;
+	unsigned int mSize;
+	int mSocket;
+	
+public:
+	devided mTag;
+	range_query(const range_query& rhs):mSocket(rhs.mSocket),mTag(rhs.mTag){
+		mQuery = NULL;
+		set(rhs.mQuery,rhs.mSize);
+	}
+	range_query(void):mQuery(NULL){ };
+	range_query(const char* query):mTag(mTag){
+		mSize =  strlen(query);
+		mQuery = (char*)malloc(mSize);
+		strcpy(mQuery,query);
+		mQuery[mSize] = '\0';
+	}
+	void set(const char* query,const int size){
+		if(mQuery != NULL){
+			free(mQuery);
+		}
+		mSize =  size;
+		mQuery = (char*)malloc(mSize+1);
+		memcpy(mQuery,query,mSize);
+		mQuery[mSize] = '\0';
+	}
+	range_query(const int socket) :mSocket(0){
+		receive(socket);
+	}
+	void receive(const int socket){
+		if(mQuery != NULL){
+			free(mQuery);
+			mQuery = NULL;
+		}
+		read(socket,&mSize,sizeof(int));
+		mQuery = (char*)malloc(mSize+1);
+		read(socket,mQuery,mSize);
+		mQuery[mSize] = '\0';
+		mTag.receive(socket);
+	}
+	int Serialize(char* buff)const{
+		int* intptr = (int*)buff;
+		*intptr = mSize;
+		memcpy(&buff[sizeof(int)],mQuery,mSize);
+		mTag.Serialize(&buff[sizeof(int)+mSize]);
+		return this->size();
+	}
+	const char* toString(void) const{
+		return mQuery;
+	}
+	range_query& operator+=(range_query& rhs){
+		// marge
+		assert( strcmp(mQuery,rhs.mQuery) == 0 );
+		mTag += rhs.mTag;
+		return *this;
+	}
+	
+	void setSocket(const int socket){
+		mSocket = socket;
+	}
+	int getSocket(void) const {
+		return mSocket;
+	}
+	bool operator==(const range_query& rhs) const {
+		return (strcmp(mQuery,rhs.mQuery) == 0);
+	}
+	bool operator<(const range_query& rhs) const {
+		return (strcmp(mQuery,rhs.mQuery) < 0);
+	}
+	range_query& operator=(const range_query& rhs) {
+		if(mQuery != NULL){
+			free(mQuery);
+		}
+		mSize = rhs.mSize;
+		mQuery = (char*)malloc(mSize);
+		strcpy(mQuery,rhs.mQuery);
+		mQuery[mSize] = '\0';
+		mSocket = rhs.mSocket;
+		return *this;
+	}
+	~range_query(void){
+		if(mQuery != NULL){
+			free(mQuery);
+		}
+	}
+	bool isComplete(void) const{
+		return mTag.isComplete();
+	}
+	unsigned int size(void) const {
+		return 4 + mSize + mTag.size();
+	}
+};
+// container of range queue value
+class queue_buffer{
+private:
+	char* data;
+	int size;
+public:
+	queue_buffer(void):data(NULL) { }
+	queue_buffer(const queue_buffer& buff){
+		size = buff.size;
+		data = (char*)malloc(size + 1);
+		strncpy(data,buff.data,size);
+		data[size] = '\0';
+	}
+	queue_buffer(const int socket){
+		this->receive(socket);
+	}
+	queue_buffer(const char* string){
+		data = NULL;
+		this->set(string);
+	}
+	int receive(const int socket){
+		// | 4  | nbyte |
+		// |size| data  |
+		int chklen;
+		read(socket,&size,4);
+		data = (char*)malloc(size);
+		chklen = read(socket,data,size);
+		return chklen;
+	}
+	void set(const char* string){
+		size = strlen(string);
+		if(data!=NULL){
+			free(data);
+		}
+		data = (char*)malloc(size);
+		strcpy(data,string);
+		data[size] = '\0';
+	}
+	int send(const int socket) const{
+		return write(socket,data,size);
+	}
+	queue_buffer& operator=(queue_buffer& rhs){
+		/* caution
+		 * It's movement, not copy */
+		data = rhs.data;
+		size = rhs.size;
+		rhs.data = NULL;
+		rhs.size = 0;
+		return *this;
+	}
+	~queue_buffer(void){
+		if(data!= NULL){
+			free(data);
+		}
+	}
+};
+class queue_buffer_list{
+private:
+	std::list<queue_buffer> list;
+	
+	queue_buffer_list& operator=(queue_buffer_list&);
+public:
+	queue_buffer_list(void){
+		list.clear();
+	}
+	queue_buffer_list(const queue_buffer_list& rhs){
+		assert(rhs.list.empty());
+	}
+	void push_back(const int socket){
+		list.push_back(queue_buffer(socket));
+	}
+	void push_back(const char* string){
+		//fprintf(stderr,"key:%s\n",string);
+		list.push_back(queue_buffer(string));
+	}
+	void send_all(const int socket){
+		while(list.size()>0){
+			list.front().send(socket);
+			list.pop_front();
+		}
+	}
+};
+
+class rquery_list{
+private:
+	std::multimap<range_query, queue_buffer_list> rqlist;
+	
+	int count_digit(int counted){
+		int cnt = 0;
+		while(counted != 0){
+			counted /= 10;
+			cnt++;
+		}
+		return cnt;
+	}
+	int set_digit(char* buff,int param){
+		int caster = 100000000,length = 0;
+		while(param/caster != 0) caster /= 10;
+		while(param != 0){
+			buff[length] = param/caster + '0';
+			param /= 10;
+			caster /= 10;
+			length++;
+		}
+		return length; 
+	}
+	void set_key(const int socket,char** key){
+		int length,offset = 0;
+		read(socket, &length, sizeof(int));
+		
+		*key = (char*)malloc(length + 12 + count_digit(length));
+		memcpy(*key,"VALUE ",6); 	offset += 6;
+		offset += read(socket, (*key)+offset, length); // read key
+		memcpy((*key)+offset, " 0 ", 3);  offset += 3;
+		offset += set_digit((*key)+offset,length);
+		memcpy((*key)+offset,"\r\n",2); offset += 2;
+		(*key)[offset++] = '\0';
+		
+		//fprintf(stderr,"## %d == %d ##",offset,length+ 14 +count_digit(length));
+		assert(offset == length+12+count_digit(length));
+	}
+	
+public:
+	bool found(range_query& query,const int socket){
+		std::multimap<range_query, queue_buffer_list>::iterator it = rqlist.find(query);
+		if(it == rqlist.end()){
+			fprintf(stderr,"not found query [%s]\n",query.toString());
+			assert(!"arienai");
+		}
+		*(const_cast<range_query*>(&it->first)) += query;
+		char* keyline;
+		set_key(socket,&keyline);
+		it->second.push_back(keyline);
+		free(keyline);
+		it->second.push_back(socket);
+		it->second.push_back("\r\n");
+		
+		if(it->first.isComplete()){
+			it->second.push_back("END\r\n");
+			it->second.send_all(it->first.getSocket());
+			rqlist.erase(it);
+		}
+		return true;
+	}
+	bool notfound(range_query& query){
+		std::multimap<range_query, queue_buffer_list>::iterator it = rqlist.find(query);
+		if(it == rqlist.end()){
+			assert(!"arienai");
+		}
+		query.mTag.dump();
+		fprintf(stderr,"+");
+		it->first.mTag.dump();
+		*(const_cast<range_query*>(&it->first)) += query;
+		if(it->first.isComplete()){
+			it->second.push_back("END\r\n");
+			it->second.send_all(it->first.getSocket());
+			rqlist.erase(it);
+		}/*else{
+			it->first.mTag.dump();
+			}*/
+		return true;
+	}
+	void set_queue(const int socket,range_query* query){
+		query->setSocket(socket);
+		fprintf(stderr,"begin ######################\n");
+		rqlist.insert(std::pair<range_query, queue_buffer_list>(*query,queue_buffer_list()));
+		fprintf(stderr,"end ######################\n");
+	}
+};
+	
 template<typename Keytype,typename Valuetype>
 class suspend_list{
 private:
@@ -899,14 +1228,18 @@ int send_introduceop(const address& aAddress,const long long targetid,const strk
 	return sentsize;
 }
 
-
 void print_range(const AbstractKey& begin,const AbstractKey& end,const char left_closed,const char right_closed){
 	fprintf(stderr,"%s%s-%s%s",left_closed==1 ?"[":"(",begin.toString(),end.toString(),right_closed==1?"]":")");
 }
-void range_forward(const unsigned int level,const long long targetid,const address& ad,const strkey& begin,const strkey& end,const char left_closed,const char right_closed,const int originip, const unsigned short originport){
-	const int bufflen = 1 + 8 + 4 + begin.size() + end.size() + 1 + 1 + 4 + 2;
+void range_forward(const unsigned int level,const long long targetid,const address& ad,const strkey& begin,const strkey& end,const char left_closed,const char right_closed,const int originip, const unsigned short originport, range_query* query, bool alltag_send){
+	const int bufflen = 1 + 8 + 4 + begin.size() + end.size() + 1 + 1 + 4 + 2 + query->size();
 	int buffindex = 0;
+	devided newtag;
 	char* buff = (char*)malloc(bufflen);
+	fprintf(stderr,"range forward:[%s-%s] %s\n",begin.toString(),end.toString(),query->toString());
+	if(!alltag_send){
+		newtag /= query->mTag;
+	}
 	
 	if(settings.verbose > 3){
 		print_range(begin,end,left_closed,right_closed);
@@ -922,10 +1255,13 @@ void range_forward(const unsigned int level,const long long targetid,const addre
 	buff[buffindex++] = right_closed;
 	serialize_int(buff,&buffindex,originip);
 	serialize_short(buff,&buffindex,originport);
+	buffindex += query->Serialize(&(buff[buffindex]));
+	
 	assert(buffindex == bufflen);
 	send_to_address(&ad,buff,buffindex);
 	free(buff);
 }
+
 
 
 // get left or right

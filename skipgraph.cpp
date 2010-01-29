@@ -22,7 +22,6 @@
 #include <assert.h>//assert
 #include "mulio.h"
 #include "memcache_buffer.h"
-#include "mytcplib.h"
 #include "aso.hpp"
 
 #ifdef DEBUG
@@ -45,6 +44,7 @@ membership_vector myVector;
 neighbor_list<defkey> gNeighborList;
 node_list<defkey,defvalue> gNodeList;
 std::list<address> gAddressList;
+rquery_list gRangeQueryList;
 suspend_list<defkey,defvalue> gSuspendList;
 
 address* get_some_address(void){
@@ -102,11 +102,13 @@ int main_thread(const int s){
 	suspend<defkey,defvalue>* sus;
 	address *targetaddress,*originaddress;
 	char left_closed,right_closed;
+	range_query range_found,range_search;
 	
 	defkey rKey;// received Key
 	defkey sKey;// secondary received Key
 	
 	defvalue rValue;//received Value
+	int tempFlag;
 	
 	/*
 	  if(settings.verbose>1)
@@ -240,7 +242,7 @@ int main_thread(const int s){
 			}
 			EndFlag = 1;
 			break;
-		case RangeOp:// [op] id level [beginkey] [endkey] [left_closed] [right_closed] [originip] [originport]
+		case RangeOp:// [op] id level [beginkey] [endkey] [left_closed] [right_closed] [originip] [originport] [origin_range_query]
 			if(settings.verbose>1)
 				fprintf(stderr,"RangeOP ");
 			
@@ -259,53 +261,66 @@ int main_thread(const int s){
 			read(socket,&targetip,4);
 			read(socket,&targetport,2);
 			
+			// devide tag
+			range_search.receive(socket);
+			
 			if(settings.verbose > 4){
 				DEBUG_OUT("received range ");
 				print_range(rKey,sKey,left_closed,right_closed);
 				DEBUG_OUT(" myKey:%s level:%d ",targetnode->getKey().toString(),targetlevel);
 			}
 			
-			if((rKey < targetnode->getKey()) && (targetnode->getKey() < sKey) ||
-			   (left_closed && rKey == targetnode->getKey() || (right_closed && sKey == targetnode->getKey()))){ // if this key is in range
-				// send FoundOP to origin
-				buffindex = 0;
-				bufflen = 1 + targetnode->getKey().size() + targetnode->getValue().size();
-				buff = (char*)malloc(bufflen);
-				buff[buffindex++] = FoundOp;
-				buffindex += targetnode->getKey().Serialize(&buff[buffindex]);
-				buffindex += targetnode->getValue().Serialize(&buff[buffindex]);
-				assert(buffindex == bufflen);
-				
-				originaddress = search_from_addresslist(targetip,targetport);
-				if(originaddress != NULL){
-					send_to_address(originaddress,buff,bufflen);
-				}else{
-					connect_send_close(targetip,targetport,buff,bufflen);
-				}
-				free(buff);
-				DEBUG_OUT("found %s\n",targetnode->getKey().toString());
-				if(sKey == rKey) {
-					EndFlag = 1;
-					break;
-				}
-			}else{
-				DEBUG_OUT("not found\n");
-			}
 			// range forward query
 			originlevel = targetlevel;
 			if(sKey < targetnode->getKey()){// range is out of mine
+				tempFlag = 0;
 				for(int i=originlevel;i>=0;i--){
 					if(!targetnode->mLeft[i] || targetnode->mLeft[i]->mKey < rKey) continue;
-					range_forward(originlevel,targetnode->mLeft[i]->mId,*(targetnode->mLeft[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport);
+					range_forward(originlevel,targetnode->mLeft[i]->mId,*(targetnode->mLeft[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport,&range_search,true);
+					tempFlag = 1;
 					break;
+				}
+				if(tempFlag == 0){ // not found
+					buffindex = 0;
+					buff = (char*)malloc(1+range_search.size());
+					buff[buffindex++] = RangeNotFoundOp;
+					buffindex += range_search.Serialize(&buff[buffindex]);
+					
+					originaddress = search_from_addresslist(targetip,targetport);
+					if(originaddress != NULL){
+						send_to_address(originaddress,buff,buffindex);
+					}else{
+						connect_send_close(targetip,targetport,buff,buffindex);
+					}
+					free(buff);
 				}
 				EndFlag = 1;
 				break; // end in this process
 			}else if(targetnode->getKey() < rKey){
+				tempFlag = 0;
 				for(int i=originlevel;i>=0;i--){
 					if(!targetnode->mRight[i] || sKey < targetnode->mRight[i]->mKey) continue;
-					range_forward(originlevel,targetnode->mRight[i]->mId,*(targetnode->mRight[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport);
+					range_forward(originlevel,targetnode->mRight[i]->mId,*(targetnode->mRight[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport,&range_search,true);
+					tempFlag = 1;
 					break;
+				}
+				if(tempFlag == 0){ // not found
+					DEBUG_OUT("pass with not found {%s}\n",range_search.toString());
+					buffindex = 0;
+					buff = (char*)malloc(1+range_search.size());
+					buff[buffindex++] = RangeNotFoundOp;
+					buffindex += range_search.Serialize(&buff[buffindex]);
+					
+					DEBUG_OUT("devided tag:");
+					range_search.mTag.dump();
+					
+					originaddress = search_from_addresslist(targetip,targetport);
+					if(originaddress != NULL){
+						send_to_address(originaddress,buff,buffindex);
+					}else{
+						connect_send_close(targetip,targetport,buff,buffindex);
+					}
+					free(buff);
 				}
 				EndFlag = 1;
 				break;
@@ -316,38 +331,64 @@ int main_thread(const int s){
 			if(targetnode->mLeft[originlevel]) // cut query by my edge 
 				if(rKey < targetnode->mLeft[originlevel]->mKey || (left_closed && rKey == targetnode->mLeft[originlevel]->mKey)){
 					DEBUG_OUT("cut forward to %s ",targetnode->mLeft[originlevel]->mKey.toString());
-					range_forward(originlevel,targetnode->mLeft[originlevel]->mId,*(targetnode->mLeft[originlevel]->mAddress),rKey,targetnode->mLeft[originlevel]->mKey,left_closed,1,targetip,targetport);
+					range_forward(originlevel,targetnode->mLeft[originlevel]->mId,*(targetnode->mLeft[originlevel]->mAddress),rKey,targetnode->mLeft[originlevel]->mKey,left_closed,1,targetip,targetport,&range_search,false);
 					left_closed = 0;
 					rKey = targetnode->mLeft[originlevel]->mKey;
 				}
 			for(int i=originlevel-1 ;i>=0; i--){
 				if(!(targetnode->mLeft[i]) || !(targetnode->mLeft[i]->mKey > rKey)) continue;
 				DEBUG_OUT("range forward to %s ",targetnode->mLeft[i]->mKey.toString());
-				range_forward(i,targetnode->mLeft[i]->mId,*(targetnode->mLeft[i]->mAddress),rKey,targetnode->mLeft[i]->mKey,left_closed,1,targetip,targetport);
+				range_forward(i,targetnode->mLeft[i]->mId,*(targetnode->mLeft[i]->mAddress),rKey,targetnode->mLeft[i]->mKey,left_closed,1,targetip,targetport,&range_search,false);
 				left_closed = 0;
 				rKey = targetnode->mLeft[i]->mKey;
 			}
 			if(left_closed && rKey == targetnode->mLeft[0]->mKey){
-				range_forward(0,targetnode->mLeft[0]->mId,*(targetnode->mLeft[0]->mAddress),rKey,rKey,1,1,targetip,targetport);
+				range_forward(0,targetnode->mLeft[0]->mId,*(targetnode->mLeft[0]->mAddress),rKey,rKey,1,1,targetip,targetport,&range_search,false);
 			}
 			//right side
 			if(targetnode->mRight[originlevel]) // cut query by my edge 
 				if(targetnode->mRight[originlevel]->mKey < sKey || (right_closed && sKey == targetnode->mRight[originlevel]->mKey)){
 					DEBUG_OUT("cut forward to %s ",targetnode->mRight[originlevel]->mKey.toString());
-					range_forward(originlevel,targetnode->mRight[originlevel]->mId,*(targetnode->mRight[originlevel]->mAddress),targetnode->mRight[originlevel]->mKey,sKey,1,right_closed,targetip,targetport);
+					range_forward(originlevel,targetnode->mRight[originlevel]->mId,*(targetnode->mRight[originlevel]->mAddress),targetnode->mRight[originlevel]->mKey,sKey,1,right_closed,targetip,targetport,&range_search,false);
 					right_closed = 0;
 					sKey = targetnode->mRight[originlevel]->mKey;
 				}
 			for(int i=originlevel-1 ;i>=0; i--){
 				if(!(targetnode->mRight[i]) || !(sKey > targetnode->mRight[i]->mKey)) continue;
 				DEBUG_OUT("range forward to %s ",targetnode->mRight[i]->mKey.toString());
-				range_forward(i,targetnode->mRight[i]->mId,*(targetnode->mRight[i]->mAddress),targetnode->mRight[i]->mKey,sKey,1,right_closed,targetip,targetport);
+				range_forward(i,targetnode->mRight[i]->mId,*(targetnode->mRight[i]->mAddress),targetnode->mRight[i]->mKey,sKey,1,right_closed,targetip,targetport,&range_search,false);
 				right_closed = 0;
 				sKey = targetnode->mRight[i]->mKey;
 			}
 			if(right_closed && sKey == targetnode->mRight[0]->mKey){
-				range_forward(0,targetnode->mRight[0]->mId,*(targetnode->mRight[0]->mAddress),sKey,sKey,1,1,targetip,targetport);
+				range_forward(0,targetnode->mRight[0]->mId,*(targetnode->mRight[0]->mAddress),sKey,sKey,1,1,targetip,targetport,&range_search,false);
 			}
+			
+			// send RangeFoundOp to origin
+			buffindex = 0;
+			bufflen = 1 + targetnode->getKey().size() + targetnode->getValue().size() + range_search.size();
+			buff = (char*)malloc(bufflen);
+			buff[buffindex++] = RangeFoundOp;
+			buffindex += range_search.Serialize(&buff[buffindex]);
+			buffindex += targetnode->getKey().Serialize(&buff[buffindex]);
+			buffindex += targetnode->getValue().Serialize(&buff[buffindex]);
+			
+			assert(buffindex == bufflen);
+			
+			
+			originaddress = search_from_addresslist(targetip,targetport);
+			if(originaddress != NULL){
+				send_to_address(originaddress,buff,bufflen);
+			}else{
+				connect_send_close(targetip,targetport,buff,bufflen);
+			}
+			free(buff);
+			DEBUG_OUT("found %s\n",targetnode->getKey().toString());
+			if(sKey == rKey) {
+				EndFlag = 1;
+				break;
+			}
+			
 			EndFlag = 1;
 			break;
 		case LinkOp://id,key,originip,originid,originport,level,LorR
@@ -414,6 +455,24 @@ int main_thread(const int s){
 				rValue.Receive(socket);
 			}
 			fprintf(stderr,"key:%s found!\n",rKey.toString());
+			EndFlag = 1;
+			break;
+		case RangeFoundOp:// [op] [range_query] [Foundkey] [FoundValue]
+			if(settings.verbose>1)
+				fprintf(stderr,"  RangeFoundOP ");
+			range_found.receive(socket);
+			DEBUG_OUT("range %s  ",range_found.toString());
+			range_found.mTag.dump();
+			gRangeQueryList.found(range_found,socket);
+			
+			EndFlag = 1;
+			break;
+		case RangeNotFoundOp:// [op] [range_query]
+			if(settings.verbose>1)
+				fprintf(stderr,"  RangeNotFoundOP ");
+			range_found.receive(socket);
+			gRangeQueryList.notfound(range_found);
+			
 			EndFlag = 1;
 			break;
 		case NotfoundOp:
@@ -711,7 +770,7 @@ int memcached_thread(const int socket){
 	std::map<int,memcache_buffer*>::iterator bufferIt;
 	memcache_buffer* buf;
 	char* buff;
-	int bufflen,chklen;
+	int bufflen,chklen,buffindex;
 	int tokennum;
 	int DeleteFlag;
 	defkey* targetkey,*beginkey,*endkey;
@@ -720,6 +779,7 @@ int memcached_thread(const int socket){
 	std::multimap<defkey,suspend<defkey,defvalue>*>::iterator suspendIt;
 	suspend<defkey,defvalue>* suspending;
 	std::list<address>::iterator AddressIt;
+	range_query origin_query;
 	
 	//test
 	char* data;
@@ -780,21 +840,23 @@ int memcached_thread(const int socket){
 			}
 		}else{
 			bufflen = create_treatop(&buff,0,targetkey,newnode->mId,myVector.mVector);
-			for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
-				if(AddressIt->mIP == settings.myip && gNodeList.empty()){
-					continue; // do not boomerang
+			if(AddressIt != gAddressList.end()){
+				for(AddressIt = gAddressList.begin();AddressIt != gAddressList.end();++AddressIt){
+					if(AddressIt->mIP == settings.myip && gNodeList.empty()){
+						continue; // do not boomerang
+					}
+					DEBUG_OUT("trying:%s .. ",my_ntoa(AddressIt->mIP));
+					chklen = send_to_address(&*AddressIt,buff,bufflen);
+					if(chklen > 0){
+						DEBUG_OUT("ok  ");
+						break;
+					}else{
+						DEBUG_OUT("NG,try next address..\n");
+					}
 				}
-				DEBUG_OUT("trying:%s .. ",my_ntoa(AddressIt->mIP));
-				chklen = send_to_address(&*AddressIt,buff,bufflen);
-				if(chklen > 0){
-					DEBUG_OUT("ok  ");
-					break;
-				}else{
-					DEBUG_OUT("NG,try next address..\n");
+				if(chklen <= 0){
+					fprintf(stderr,"\n All Address tried but failed.\n");
 				}
-			}
-			if(chklen <= 0){
-				fprintf(stderr,"\n All Address tried but failed.\n");
 			}
 		}
 		free(buff);
@@ -836,6 +898,7 @@ int memcached_thread(const int socket){
 				suspending->add(*targetkey);
 				gSuspendList.setKey(socket,*targetkey);
 			}else{
+				suspending->add("VALUE");
 				suspending->add(targetkey->mKey);
 				suspending->add(" 0 ");
 				suspending->add(targetnode->getValue().mLength);
@@ -864,8 +927,26 @@ int memcached_thread(const int socket){
 		endkey = new defkey(buf->tokens[RGET_END].str);
 		DEBUG_OUT("end:%s\n",endkey->toString());
 		
-		range_forward(MAXLEVEL-1,0,gAddressList.front(),*beginkey,*endkey,buf->tokens[RGET_LEFT_CLOSED].str[0] - '0',buf->tokens[RGET_RIGHT_CLOSED].str[0] - '0', settings.myip, settings.targetport);
+		buffindex = 0;
+		buff = (char*)malloc(beginkey->size() + endkey->size() + 5);
+		memcpy(&buff[buffindex],buf->tokens[RGET_BEGIN].str,strlen(buf->tokens[RGET_BEGIN].str));
+		buffindex += strlen(buf->tokens[RGET_BEGIN].str);
+		buff[buffindex++] = ' ';
+		memcpy(&buff[buffindex],buf->tokens[RGET_END].str,strlen(buf->tokens[RGET_END].str));
+		buffindex += strlen(buf->tokens[RGET_END].str);
+		buff[buffindex++] = ' ';
+		buff[buffindex++] = buf->tokens[RGET_LEFT_CLOSED].str[0];
+		buff[buffindex++] = ' ';
+		buff[buffindex++] = buf->tokens[RGET_RIGHT_CLOSED].str[0];
+		buff[buffindex] = '\0';
 		
+		origin_query.mTag.setZero();
+		origin_query.set(buff,buffindex);
+		gRangeQueryList.set_queue(socket,&origin_query);
+		DEBUG_OUT("set query [%s]\n",origin_query.toString());
+		origin_query.mTag.init();
+		range_forward(MAXLEVEL-1,0,gAddressList.front(),*beginkey,*endkey,buf->tokens[RGET_LEFT_CLOSED].str[0] - '0',buf->tokens[RGET_RIGHT_CLOSED].str[0] - '0', settings.myip, settings.targetport, &origin_query,true);
+		free(buff);
 		delete beginkey;
 		delete endkey;
 		buf->ParseOK();
@@ -1050,6 +1131,7 @@ void print_usage(void){
 	std::cout << "-P [x]              :use port" << std::endl;
 	std::cout << "-h                  :print this message" << std::endl;
 }
+
 void settings_init(void){
 	settings.myport = 10005;
 	settings.memcacheport = 11211;
