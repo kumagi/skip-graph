@@ -23,7 +23,7 @@ namespace localfunc{
 			caster /= 10;
 		}
 		while(data > 0){
-			*pchar++ = data/caster + '0';
+			*pchar++ = (char)(data/caster + '0');
 			data = data%caster;
 			caster /= 10;
 		}
@@ -31,7 +31,7 @@ namespace localfunc{
 		return string;
 	}
 };
-// key / value pair
+// key-value pair
 template <typename keytype,typename valuetype>
 class node_kvp : public node {
 private:
@@ -50,14 +50,14 @@ public:
 		int sentlength = 0;
 		char* string;
 		if(value.mValue != NULL){
-			sentlength = write(socket,key.mKey,key.mLength);
+			sentlength = write(socket,"VALUE ",6);
+			sentlength += write(socket,key.mKey,key.mLength);
 			sentlength += write(socket," 0 ",3);
 			string = localfunc::itoa(value.mLength);
 			sentlength += write(socket,string,strlen(string));
 			sentlength += write(socket,"\r\n",2);
 			sentlength += write(socket,value.mValue,value.mLength);
 			sentlength += write(socket,"\r\n",2);
-			//fprintf(stderr,"send %d bytes[%s]\n",sentlength,value.mValue);
 		}
 		return sentlength;
 	}
@@ -74,7 +74,7 @@ public:
 	
 	~node_kvp(void){ }
 	
-	static node* create(const keytype& key){
+	node* create(const keytype& key){
 		return new node_kvp<keytype,valuetype>(key);
 	}
 };
@@ -99,7 +99,7 @@ public:
 		//fprintf(stderr,"send %d bytes[%s]\n",length,str);
 		return sentlength;
 	}
-	inline int receive(const int socket){
+	int receive(const int){
 		return 0;
 	}
 	
@@ -111,7 +111,7 @@ public:
 		str = NULL;
 	}
 	
-	static node* create(const char* str ){
+	node* create(const char* str ){
 		return new node_str(str);
 	}
 };
@@ -158,7 +158,7 @@ public:
 	inline void add(const char* c){
 		suspend_list.push_back(new node_str(c));
 	}
-	inline const int getCounter(void) const{
+	inline int getCounter(void) const{
 		return counter;
 	}
 	inline void addCounter(const int cnt){

@@ -1,116 +1,189 @@
 #include "mulio.h"
 
 void mulio::printSocketList(void){
-	std::set<int>::iterator it = mSocketList.begin();
+	std::list<int>::iterator it = mSocketList.begin();
 	while( it != mSocketList.end() ){
 		fprintf(stderr,"%d ",(*it));
 		++it;
 	}
 }
-int mulio::calcMaxFd(void){
-	int max=0;
-	if( *(mSocketList.end()) > max ){
-		max =  *mSocketList.end();
-	}
-	if( mAcceptSocket > max ){
-		max = mAcceptSocket;
-	}
-	if( awaker[0] > max ){
-		max = awaker[0];
-	}
-	if( awaker[1] > max ){
-		max = awaker[1];
-	}
-	return max;
-}
-int mulio::fds_set_all(fd_set* fds){
-	FD_ZERO(fds);
-	FD_SET(mAcceptSocket,fds);
-	FD_SET(awaker[0],fds);
-	
-	int max;
-	if(!mSocketList.empty()){
-		std::set<int>::iterator it = mSocketList.begin();
-		while( it != mSocketList.end() ){
-			FD_SET( *it, fds );
-			++it;
-		}
-		max = *it;
-	}else {
-		max = 0;
-	}
-	max = max > mAcceptSocket ? max : mAcceptSocket; 
-	max = max > awaker[0] ? max : awaker[0];
-	return max;
+void mulio::setverbose(int v){
+	mode_verbose = v;
 }
 void mulio::SetCallback(int (*cb)(const int)){
 	callback = cb;
 }
+
 void mulio::SetAcceptSocket(const int socket){
 	mAcceptSocket = socket;
-	if( socket > mMaxFd ){
-		mMaxFd = socket;
-	}
 }
+
 void mulio::SetSocket(const int socket){
-	mAddSocket.push_back(socket);
-	if( socket > mMaxFd ){
-		mMaxFd = socket;
-	}
-	//	printf("setsocket:%d\n",socket);
-	write(awaker[1],"",1);
+	set_reuse(socket);
+	set_nodelay(socket);
+	socket_maximize_rcvbuf(socket);
+	socket_maximize_sndbuf(socket);
+	mNewsocket.push(socket);
+	write(adder[1],"",1);
+	DEBUG_OUT("mulio::SetSocket $%d$ ",socket);
 }
+
 void mulio::worker(void){
 	fd_set fds_clone;
-	mMaxFd = fds_set_all(&fds);
+	char dummy;
+	
+	int flag=fcntl(mAcceptSocket, F_GETFL, 0);
+	if(flag < 0){
+		perror("fcntl(GET) error");
+	}
+	if(fcntl(mAcceptSocket, F_SETFL, flag|O_NONBLOCK)<0){
+		perror("fcntl(NONBLOCK) error");
+	}
+	
+	ev.events = EPOLLIN | EPOLLET;
+	ev.data.fd = mAcceptSocket;
+	epoll_ctl(mEpollfd, EPOLL_CTL_ADD, mAcceptSocket, &ev);
+   
 	
 	while(1){
 		memcpy(&fds_clone,&fds,sizeof(fds));
-		select(mMaxFd+1, &fds_clone, NULL ,NULL ,NULL);
-		if(FD_ISSET(awaker[0],&fds_clone)){ // rebuild fds and mSocketList
-			char dummy;
-			read(awaker[0],&dummy,1);
-				
-			// delete by DeleteList
-			for(unsigned int i=0; i < mDeleteSocket.size(); i++){
-				FD_CLR(mDeleteSocket[i],&fds);
-				mSocketList.erase(mDeleteSocket[i]);
-				if( mDeleteSocket[i] == mMaxFd ){
-					mMaxFd = calcMaxFd();
-				}
-			}
-			mDeleteSocket.clear();
-			// add by AddList
-			for(unsigned int i=0; i < mAddSocket.size(); i++){
-				FD_SET(mAddSocket[i],&fds);
-				mSocketList.erase(mAddSocket[i]);
-				mSocketList.insert(mAddSocket[i]);
-				if( mAddSocket[i] > mMaxFd ){
-					mMaxFd = mAddSocket[i];
-				}
-			}
-			mAddSocket.clear();
+		
+		// wait for changes
+		if(mode_verbose){
+			DEBUG_OUT("\n\nwaiting ... ");
 		}
-		if(FD_ISSET(mAcceptSocket,&fds_clone)){ // accept
-			
-			sockaddr_in clientaddr;
-			socklen_t addrlen = sizeof(sockaddr_in);
-			int newsocket = accept(mAcceptSocket, (struct sockaddr*)&clientaddr, &addrlen);
-			mSocketList.insert(newsocket);
-			FD_SET( newsocket ,&fds );
-			//printf("newsocket:%d\n",newsocket);
-			if( mMaxFd < newsocket){
-				mMaxFd = newsocket;
+		int nfds = epoll_wait(mEpollfd, events, MAXFD,-1);
+		
+		if(mode_verbose){
+			DEBUG_OUT("detect! %d sockets\n",nfds);
+			if(nfds<0){
+				perror("epoll");
 			}
-		}else { // read
-			std::set<int>::iterator it = mSocketList.begin();
-			while( it != mSocketList.end() ){
-				if( FD_ISSET(*it,&fds_clone )){
-					FD_CLR(*it, &fds);
-					mActiveSocket.push_back(*it);
-					sem_post(&sem_active);
+		}
+		for(int i = 0; i < nfds; i++){
+			if(events[i].data.fd == updater[0]){ // update fd
+				while(1){
+					int flag = read(updater[0],&dummy,1);
+					if(flag <=0) break;
 				}
-				++it;
+				while(!mUpdatesocket.empty()){
+				
+					// while(mUpdatesocket == 0);
+					int tmpsock;
+					mUpdatesocket.atomic_pop(&tmpsock);
+					
+				
+					ev.data.fd = tmpsock;
+					ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+					epoll_ctl(mEpollfd, EPOLL_CTL_MOD, tmpsock, &ev);
+				
+					if(mode_verbose){
+						DEBUG_OUT("reset (%d) done %d/%d\n",tmpsock,i+1,nfds);
+					}
+				}
+			}else if(events[i].data.fd == adder[0]){ // add fd
+				while(1){
+					int flag = read(adder[0],&dummy,1);
+					if(flag <=0) break;
+				}
+				while(!mNewsocket.empty()){
+					// add
+					int tmpsock;
+					mNewsocket.atomic_pop(&tmpsock);
+					
+					if(mode_verbose){
+						DEBUG_OUT("add socket %d to [",tmpsock);
+						printSocketList();
+						DEBUG_OUT("]...done %d/%d\n",i+1,nfds);
+					}
+					
+					mSocketList.push_back(tmpsock);
+					mSocketList.sort();
+					mSocketList.unique();
+					
+					ev.data.fd = tmpsock;
+					ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+					epoll_ctl(mEpollfd, EPOLL_CTL_ADD, tmpsock, &ev);
+					
+				}
+			}else if(events[i].data.fd == remover[0]){ // delete fd
+				while(1){
+					int flag = read(remover[0],&dummy,1);
+					if(flag <=0) break;
+				}
+				while(!mRemovesocket.empty()){
+					// remove
+					int tmpsock;
+					mRemovesocket.atomic_pop(&tmpsock);
+					
+					epoll_ctl(mEpollfd, EPOLL_CTL_DEL, tmpsock, NULL);
+					
+					if(mode_verbose){
+						DEBUG_OUT("remove socket %d from [",tmpsock);
+						printSocketList();
+						DEBUG_OUT("]...done %d/%d\n",i+1,nfds);
+					}
+					mSocketList.remove(tmpsock);
+				}
+			}else if(events[i].data.fd == mAcceptSocket){ // accept
+				if(mode_verbose){
+					DEBUG_OUT("muilo::accept{");
+				}
+				do{
+					sockaddr_in clientaddr;
+					socklen_t addrlen = sizeof(sockaddr_in);
+					int newsocket = accept(mAcceptSocket, (struct sockaddr*)&clientaddr, &addrlen);
+					
+					if(newsocket == -1){
+						if (errno == EAGAIN || errno == EWOULDBLOCK) {
+							break;
+						} else if (errno == EMFILE) {
+							perror("accept() emfile");
+						} else {
+							perror("accept()");
+						}
+						break;
+					}
+					if(mode_verbose){
+						DEBUG_OUT("socket:$%d$ from %s...",newsocket, my_ntoa((int)clientaddr.sin_addr.s_addr));
+					}
+					set_reuse(newsocket);
+					set_nodelay(newsocket);
+					socket_maximize_rcvbuf(newsocket);
+					socket_maximize_sndbuf(newsocket);
+					mSocketList.push_back(newsocket);
+					mSocketList.sort();
+				
+					ev.data.fd = newsocket;
+					ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+					epoll_ctl(mEpollfd, EPOLL_CTL_ADD, newsocket, &ev);
+					if(mode_verbose){
+						DEBUG_OUT("ok\n");
+					}
+				}while(1);
+				if(mode_verbose){
+					DEBUG_OUT("}accept %d/%d\n",i+1,nfds);
+				}
+			}else{// read
+				if(mode_verbose){
+					DEBUG_OUT("mulio::activate %d\n", events[i].data.fd);
+				}
+				
+				mActivesocket.push(events[i].data.fd);
+				
+				int semvalue;
+				
+				if(mode_verbose){
+					sem_getvalue(&stopper,&semvalue);
+					DEBUG_OUT("semaphore!! pushing %d $$$[ %d ->",events[i].data.fd,semvalue);
+				}
+				
+				sem_post(&stopper);
+				
+				if(mode_verbose){
+					sem_getvalue(&stopper,&semvalue);
+					DEBUG_OUT("%d ]$$$ UP\n",semvalue);
+				}
 			}
 		}
 	}
@@ -118,28 +191,33 @@ void mulio::worker(void){
 void mulio::eventloop(void){
 	int socket,deleteflag;
 	while(1){
-		sem_wait(&sem_active);
-		/*
-		fprintf(stderr,"All sockets ");
-		printSocketList();
-		fprintf(stderr,"\n");
-		fprintf(stderr,"socket [ ");
-		for(unsigned int i=0;i<mActiveSocket.size();i++){
-			fprintf(stderr,"%d ",mActiveSocket[i]);
+		int semvalue;
+		sem_getvalue(&stopper,&semvalue);
+		if(mode_verbose){
+			sem_getvalue(&stopper,&semvalue);
+			fprintf(stderr,"semaphore!! ###[ %d ->",semvalue);
 		}
-		fprintf(stderr,"] in que\n");
-		//*/
-		socket = mActiveSocket[0];
-		mActiveSocket.pop_front();
+		sem_wait(&stopper);
+		
+		mActivesocket.atomic_pop(&socket);
+		if(mode_verbose){
+			sem_getvalue(&stopper,&semvalue);
+			fprintf(stderr,"%d ]### receive %d\n",semvalue,socket);
+		}
+		if(socket == 0){
+			assert(!"arienai!!!");
+		}
+		
+		// do work
 		
 		deleteflag = (*callback)(socket);
 		
 		if( deleteflag == 0 ){
-			mAddSocket.push_back( socket );
-			write(awaker[1],"",1);
+			mUpdatesocket.push(socket);
+			write(updater[1],"",1);
 		}else {
-			mDeleteSocket.push_back( socket );
-			write(awaker[1],"",1);
+			mRemovesocket.push(socket);
+			write(remover[1],"",1);
 		}
 	}
 }
@@ -150,21 +228,57 @@ void mulio::run(void){
 	pthread_create(&mythread,NULL,thread_pass,this);
 }
 mulio::mulio(void){
-	pipe(awaker);
+	pipe(adder);
+	pipe(remover);
+	pipe(updater);
+	
+	mEpollfd = epoll_create(255);
+	if(mEpollfd < 0){
+		perror("epoll create");
+	}
+	set_nonblock(updater[0]);
+	ev.events = EPOLLIN | EPOLLET;
+	ev.data.fd = updater[0];
+	if(epoll_ctl(mEpollfd, EPOLL_CTL_ADD, updater[0], &ev) == -1){
+		perror("epoll_ctl: updater");
+	}
+	set_nonblock(adder[0]);
+	ev.events = EPOLLIN | EPOLLET;
+	ev.data.fd = adder[0];
+	if(epoll_ctl(mEpollfd, EPOLL_CTL_ADD, adder[0], &ev) == -1){
+		perror("epoll_ctl: adder");
+	}
+	set_nonblock(remover[0]);
+	ev.events = EPOLLIN | EPOLLET;
+	ev.data.fd = remover[0];
+	if(epoll_ctl(mEpollfd, EPOLL_CTL_ADD, remover[0], &ev) == -1){
+		perror("epoll_ctl: remover");
+	}
+	
 	mSocketList.clear();
-	sem_init(&sem_active,0,0);
-	mMaxFd=awaker[0];
+	mode_verbose = 0;
+	
+	mUpdatesocket.clear();
+	mNewsocket.clear();
+	mRemovesocket.clear();
+	
+	
+	sem_init(&stopper ,0 ,0);
+	
 }
 mulio::~mulio(void){
-	close(awaker[0]);
-	close(awaker[1]);
-	std::set<int>::iterator it = mSocketList.begin();
+	close(adder[0]);
+	close(adder[1]);
+	close(updater[0]);
+	close(updater[1]);
+	close(remover[0]);
+	close(remover[1]);
+	std::list<int>::iterator it = mSocketList.begin();
 	while( it != mSocketList.end() ){
 		close(*it);
 		++it;
 	}
 	pthread_cancel(mythread);
-	sem_destroy(&sem_active);
 }
 void* thread_pass(void* Imulio){
 	class mulio* Imuliop=(class mulio*)Imulio;

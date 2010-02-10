@@ -1,3 +1,4 @@
+#include <string>
 
 enum memcache_buffer_constants{
 	TOKENMAX = 8,
@@ -18,14 +19,16 @@ class memcache_buffer{
 private:
 	const int mSocket;
 	int mState;
-	char* mBuff;
 	int mSize;
+	char* mBuff;
 	int mStart;
 	int mChecked;
 	int mRead;
 	int mReft;
 	int mCloseflag;
 	int moreread;
+	memcache_buffer(const memcache_buffer&);
+	memcache_buffer& operator=(const memcache_buffer&);
 public:
  	enum state {
 		state_free,
@@ -57,7 +60,7 @@ public:
 	bool operator<(const memcache_buffer& rightside) const;
 private:
 	int readmax(void);
-	inline void string_write(char* string) const;
+	inline void string_write(std::string str) const;
 	inline int parse(char* start);
 	int read_tokens(char* str,int maxtokens);
 	void init_buffer(void);

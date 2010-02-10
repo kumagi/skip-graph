@@ -3,7 +3,11 @@
 static int OK=1;
 
 int create_tcpsocket(void){
-	return socket(AF_INET,SOCK_STREAM, 0);
+	int fd = socket(AF_INET,SOCK_STREAM, 0);
+	if(fd < 0){
+		perror("scocket");
+	}
+	return fd;
 }
 char* my_ntoa(int ip){
 	struct sockaddr_in tmpAddr;
@@ -31,22 +35,27 @@ int connect_port_ip(const int socket,const int ip,const unsigned short port){
 	addr.sin_addr.s_addr = ip;
 	addr.sin_port=htons(port);
 	
-	if(connect(socket,(struct sockaddr*)&addr,sizeof(addr)) != 0){
+	
+	if(connect(socket,(struct sockaddr*)&addr,sizeof(addr))){
 		perror("connect");
 		fprintf(stderr,"target:%s\n",my_ntoa(ip));
+		exit(1);
 		return 1;
 	}
 	return 0;
 }
 
-int connect_send_close(const int ip,const unsigned short port,const void* buff,const size_t bufflen){
+int connect_send_close(const int ip,const unsigned short port,const char* buff,const size_t bufflen){
 	// return how many bytes sent
 	int socket = create_tcpsocket();
 	set_linger(socket);
 	
 	int success = connect_port_ip(socket,ip,port);
 	if(success) {
-		return 0;
+		perror("connect");
+		fprintf(stderr,"target:%s\n",my_ntoa(ip));
+		exit(1);
+		return 1;
 	}
 	size_t postsend=0,tmpsend;
 	while(postsend != bufflen){
@@ -60,21 +69,61 @@ int connect_send_close(const int ip,const unsigned short port,const void* buff,c
 	close(socket);
 	return postsend;
 }
-int connect_send(int* socket,const int ip,const unsigned short port,const void* buff,const size_t bufflen){
+int connect_send(int* socket,const int ip,const unsigned short port,const char* buff,const size_t bufflen){
 	*socket = create_tcpsocket();
 	set_linger(*socket);
 	connect_port_ip(*socket,ip,port);
 	size_t postsend=0,tmpsend;
 	while(postsend != bufflen){
-		tmpsend = write(*socket,buff,bufflen);
+		tmpsend = write(*socket,&buff[postsend],bufflen);
 		if(tmpsend>0){
 			postsend+=tmpsend;
 		}else{
 			return 0;
 		}
 	}
-	
 	return postsend;
+}
+
+int deep_write(const int socket,const void* buff,int length){
+	const char* beginbuff = (char*)buff;
+	int sendsize = 0,sentbuf = 0;
+	
+	int flag = 0;
+	while(length > 0){
+		sendsize = write(socket,&beginbuff[sentbuf],length);
+		if(sendsize>0){
+			sentbuf += sendsize;
+			length -= sendsize;
+		}else{
+			if(flag == 0){
+				fprintf(stderr,"socket:%d ",socket);
+				perror("deep_write");
+				flag=1;
+			}
+		}
+	}
+	return sendsize;
+}
+int deep_read(const int socket,void* buff,int length){
+	char* beginbuff = (char*)buff;
+	int recvsize = 0,recvbuf = 0;
+	
+	int flag = 0;
+	while(length > 0){
+		recvsize = read(socket,&beginbuff[recvbuf],length);
+		if(recvsize>0){
+			recvbuf += recvsize;
+			length -= recvsize;
+		}else{
+			if(flag==0){
+				fprintf(stderr,"socket:%d ",socket);
+				perror("deep read");
+				flag = 1;
+			}
+		}
+	}
+	return recvbuf;
 }
 
 void socket_maximize_sndbuf(const int socket){
@@ -83,6 +132,12 @@ void socket_maximize_sndbuf(const int socket){
     int min, max, avg;
     int old_size;
 
+	//*  minimize!
+	avg = intsize;
+	setsockopt(socket, SOL_SOCKET, SO_SNDBUF, (void *)&avg, intsize);
+	return;
+	//*
+	
     if (getsockopt(socket, SOL_SOCKET, SO_SNDBUF, &old_size, &intsize) != 0) {
         return;
     }
@@ -123,15 +178,36 @@ void socket_maximize_rcvbuf(const int socket){
         }
     }
 }
+void set_nodelay(const int socket){
+	return;
+	int result = setsockopt(socket, SOL_SOCKET, TCP_NODELAY, (void *)&OK, sizeof(OK));
+	if(result < 0){
+		perror("set nodelay ");
+	}
+}
+
+int set_nonblock(const int socket) {
+	return fcntl(socket, F_SETFL, O_NONBLOCK);
+}
 
 void set_reuse(const int socket){
-	setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (void *)&OK, sizeof(OK));
+	int result = setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (void *)&OK, sizeof(OK));
+	if(result < 0){
+		perror("set reuse ");
+	}
 }
 void set_keepalive(const int socket){
-	setsockopt(socket, SOL_SOCKET, SO_KEEPALIVE, (void *)&OK, sizeof(OK));
+	int result = setsockopt(socket, SOL_SOCKET, SO_KEEPALIVE, (void *)&OK, sizeof(OK));
+	if(result < 0){
+		perror("set keepalive ");
+	}
 }
+
 void set_linger(const int socket){
-	setsockopt(socket, SOL_SOCKET, SO_LINGER, (void *)&OK, sizeof(OK));
+	int result = setsockopt(socket, SOL_SOCKET, SO_LINGER, (void *)&OK, sizeof(OK));
+	if(result < 0){
+		perror("set linger ");
+	}
 }
 int chk_myip(void){
 

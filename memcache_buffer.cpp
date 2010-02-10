@@ -22,16 +22,10 @@ int natoi(char* str,int length){
 	return ans;
 }
 
-memcache_buffer::memcache_buffer(int socket):mSocket(socket){
-	assert(socket != 0);
-	mState = state_free;
-	mSize = 128; // buffer size
-	mStart = 0; // head of parse
-	mRead = 0; // received data
-	mChecked = 0; // checked data
-	mCloseflag = 0;
-	mReft = mSize; // reft buffer
-	mBuff = (char*)malloc(mSize);
+memcache_buffer::memcache_buffer(int socket):mSocket(socket),mState(state_free),mSize(128),mBuff((char*)malloc(mSize)),mStart(0),mChecked(0),mRead(0),mReft(mSize),mCloseflag(0),moreread(0),tokenmax(1){
+	if(socket == 0){
+		fprintf(stderr,"socket is 0, pass\n");
+	}
 	//fprintf(stderr,"buffer initialized\n");
 }
 memcache_buffer::~memcache_buffer(void){
@@ -41,7 +35,8 @@ memcache_buffer::~memcache_buffer(void){
 
 void memcache_buffer::ParseOK(void){
 	mState = state_free;
-	//fprintf(stderr,"parse OK, trying free buffer\n");
+	
+	//fprintf(stderr,"parse OK, %d buffer left\n", mRead - mChecked);
 	if(mChecked == mRead){
 		if(mSize > 128){
 			mBuff = (char*)realloc((void*)mBuff,128);
@@ -51,7 +46,7 @@ void memcache_buffer::ParseOK(void){
 		mState = state_free;
 		mBuff[0] = '\0';
 	}else{
-		//fprintf(stderr,"failed to free buffer read[%d] checked[%d]\n",mRead,mChecked);
+		fprintf(stderr,"failed to free buffer read[%d] checked[%d]\n",mRead,mChecked);
 	}
 	if(mCloseflag == 1){
 		close(mSocket);
@@ -176,9 +171,8 @@ int memcache_buffer::readmax(void){
 	return totalread;
 }
 	
-inline void memcache_buffer::string_write(char* string) const{
-	int len = strlen(string);
-	write(mSocket,string,len);
+inline void memcache_buffer::string_write(std::string str) const{
+	write(mSocket,str.data(),str.length());
 	write(mSocket,"\r\n",2);
 }
 		
