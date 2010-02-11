@@ -21,7 +21,7 @@
 #ifndef DEBUG_MACRO
 #define DEBUG_MACRO
 
-#define DEBUG_MODE
+//#define DEBUG_MODE
 #ifdef DEBUG_MODE
 #define DEBUG_OUT(...) fprintf(stderr,__VA_ARGS__)
 #define DEBUG(x) x
@@ -869,7 +869,7 @@ public:
 	}
 	void dump(void) const {
 		unsigned int flag = 0;
-		fprintf(stderr,"0x");
+		fprintf(stderr,"%dx",length);
 		for(int i=length-1;i>=0;i--){
 			if(flag == 1 || (data[i] != 0)){
 				fprintf(stderr,"%02x",data[i]);
@@ -953,14 +953,18 @@ public:
 	deviding_tag& operator+=(deviding_tag& rhs){
 		unsigned char carry = 0;
 		if(length < rhs.length){
-			length = rhs.length;
 			if(data){
-				free(data);
+				data = (unsigned char*)realloc(data,rhs.length);
+				for(unsigned int i = length;i<rhs.length;i++){
+					data[i] = 0;
+				}
+			}else{
+				data = (unsigned char*)malloc(rhs.length);
+				for(unsigned int i = 0;i<rhs.length;i++){
+					data[i] = 0;
+				}
 			}
-			data = (unsigned char*)malloc(rhs.length);
-			for(unsigned int i = 0;i<length;i++){
-				data[i] = 0;
-			}
+			length = rhs.length;
 		}
 		int shorter_length = length < rhs.length ? length : rhs.length;
 		

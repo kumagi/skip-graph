@@ -338,9 +338,9 @@ int main_thread(const int socket){
 			mulio.SetSocket(newsocket);
 			originaddress = gAddressList.add(newsocket,targetip,targetport);
 			assert(gAddressList.find(targetip,targetport) != NULL);
-			
 			send_to_address(originaddress,buff,bufflen);
 		}
+		DEBUG(range_search.mTag.dump());
 		free(buff);
 		DEBUG_OUT("RangeOp end  ");
 		break;
@@ -1137,7 +1137,6 @@ int main(int argc,char** argv){
 	
 	threads = (pthread_t*)malloc((settings.threads-1)*sizeof(pthread_t));
 	while(1){
-		break;
 		DEBUG(break);
 		for(int i=0;i<settings.threads-1;i++){
 			pthread_create(&threads[i],NULL,worker,NULL);

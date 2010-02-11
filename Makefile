@@ -1,4 +1,4 @@
-OPTS = -std=c++0x -Wall -march=x86-64 -O0 -g
+OPTS = -std=c++0x -Wall -march=x86-64 -O4
 OBJS = kttcp.o mytcplib.o mulio.o 
 WARNS = -Wextra -Wformat=2 -Wstrict-aliasing=2 -Wcast-qual -Wcast-align \
 	-Wwrite-strings -Wfloat-equal -Wpointer-arith -Wswitch-enum#  -Weffc++
