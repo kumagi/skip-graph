@@ -43,11 +43,15 @@ suspend_list<defkey,defvalue> gSuspendList;
 unsigned int serialize_int_with_str(char* buff,int data){
 	unsigned int length = 0,caster = 1000000000;
 	while(data/caster == 0) caster /= 10;
-	while(data != 0){
+	while(data > 0){
 		buff[length] = (char)(data/caster + '0');
 		length++;
 		caster /= 10;
-		data = data%caster;
+		if(caster){
+			data = data%caster;
+		}else {
+			break;
+		}
 	}
 	return length;
 }
@@ -93,7 +97,6 @@ int main_thread(const int socket){
 		fprintf(stderr," close %d",socket);
 		perror("  ");
 		close(socket);
-		fprintf(stderr," ok ");
 		gAddressList.erase(socket);
 		DeleteFlag = 1;
 		return DeleteFlag;
@@ -232,12 +235,7 @@ int main_thread(const int socket){
 		
 		// identifier and devided tag
 		range_search.receive(socket);
-			
-		if(settings.verbose > 4){
-			DEBUG_OUT("received range ");
-			print_range(rKey,sKey,left_closed,right_closed);
-			DEBUG_OUT(" myKey:%s level:%d {%s} ",targetnode->getKey().toString(),targetlevel,range_search.toString());
-		}
+		
 		// range forward query
 		originlevel = targetlevel;
 		if(sKey < targetnode->getKey()){// range is out of mine
@@ -329,12 +327,19 @@ int main_thread(const int socket){
 		
 		assert(buffindex == bufflen);
 			
-		DEBUG_OUT("\n-----------RangeFoundOp %s\n to ",targetnode->getKey().toString());
+		DEBUG_OUT("\nsending RangeFoundOp %s\n to ",targetnode->getKey().toString());
 		originaddress = gAddressList.find(targetip,targetport);
 		if(originaddress != NULL){
+			
 			send_to_address(originaddress,buff,bufflen);
 		}else{
-			connect_send_close(targetip,targetport,buff,bufflen);
+			newsocket = create_tcpsocket();
+			connect_port_ip(newsocket,targetip,targetport);
+			mulio.SetSocket(newsocket);
+			originaddress = gAddressList.add(newsocket,targetip,targetport);
+			assert(gAddressList.find(targetip,targetport) != NULL);
+			
+			send_to_address(originaddress,buff,bufflen);
 		}
 		free(buff);
 		DEBUG_OUT("RangeOp end  ");
@@ -414,16 +419,22 @@ int main_thread(const int socket){
 		if(settings.verbose>1)
 			fprintf(stderr,"  RangeFoundOP ");
 		range_found.receive(socket);
-		DEBUG_OUT("range %s  ",range_found.toString());
+		DEBUG_OUT(" query is {%s} ",range_found.toString());
 		DEBUG(range_found.mTag.dump());
 		gRangeQueryList.found(range_found,socket);
-		
+		if(range_found.mTag.isComplete()){
+			DEBUG_OUT("----------range query done.-------------\n");
+		}
+		DEBUG_OUT("\n");
 		break;
 	case RangeNotFoundOp:// [op] [range_query]
 		if(settings.verbose>1)
 			fprintf(stderr,"  RangeNotFoundOP ");
 		range_found.receive(socket);
+		DEBUG_OUT(" query is {%s} ",range_found.toString());
+		DEBUG(range_found.mTag.dump());
 		gRangeQueryList.notfound(range_found);
+		DEBUG_OUT("\n");
 		break;
 	case NotfoundOp:
 		if(settings.verbose>1)
@@ -695,14 +706,53 @@ int main_thread(const int socket){
 	state_error,
 */
 
-std::map<int,memcache_buffer*> gMemcachedSockets;
+class memcached_clients{
+private:
+	enum constant{
+		SIZE = 64,
+	};
+	std::list<memcache_buffer*> hashMap[SIZE];
+	
+public:
+	memcache_buffer* retrieve(const int socket){
+		int pos = murmurhash_int(socket)%SIZE;
+		memcache_buffer* ans;
+		std::list<memcache_buffer*>& list = hashMap[pos];
+		std::list<memcache_buffer*>::iterator it;
+		for(it = list.begin();it!=list.end();++it){
+			if((*it)->getSocket() == socket){
+				break;
+			}
+		}
+		if(it == list.end()){// new creation
+			ans = new memcache_buffer(socket);
+			list.push_back(ans);
+		}else{//
+			return *it;
+		}
+		return ans;
+	}
+	void erase(const int socket){
+		int pos = murmurhash_int(socket)%SIZE;
+		std::list<memcache_buffer*>& list = hashMap[pos];
+		std::list<memcache_buffer*>::iterator it;
+		for(it = list.begin();it!=list.end();++it){
+			if((*it)->getSocket() == socket){
+				delete *it;
+				list.erase(it);
+				break;
+			}
+		}
+		return;
+	}
+} gMemcachedSockets; 
 
 int memcached_thread(const int socket){
 	std::map<int,memcache_buffer*>::iterator bufferIt;
 	memcache_buffer* buf;
 	char* buff;
 	int chklen,buffindex;
-	int tokennum;
+	int tokennum,targetflag;
 	int DeleteFlag;
 	defkey* targetkey,*beginkey,*endkey;
 	defvalue* targetvalue;
@@ -716,17 +766,17 @@ int memcached_thread(const int socket){
 	
 	//if(settings.verbose > 2)
 		//	fprintf(stderr,"memcached client arrived socket:%d\n",socket);
-	bufferIt = gMemcachedSockets.find(socket);
-	if(bufferIt == gMemcachedSockets.end()){
-		buf = new memcache_buffer(socket);
-		gMemcachedSockets.insert(std::pair<int,memcache_buffer*>(socket,buf));
-	}else {
-		buf = bufferIt->second;
-	}
+	buf = gMemcachedSockets.retrieve(socket);
 	
 	tokennum = buf->receive();
 	
 	DeleteFlag = 0;
+	if(tokennum < 0){
+		gMemcachedSockets.erase(socket);
+		//DeleteFlag = 1;
+		//return;
+	}
+	
 	switch(buf->getState()){
 	case memcache_buffer::state_set:
 		DEBUG_OUT("set!![%lld] ",gId);
@@ -758,14 +808,29 @@ int memcached_thread(const int socket){
 		//send the data
 		gNodeList.insert(newnode);
 		if(targetnode){
+			targetflag = 0;
 			if(targetnode->getKey() < *targetkey){
-				chklen = send_treatop(*targetnode->mRight[0]->mAddress,targetnode->mRight[0]->mId,*targetkey,settings.myip,newnode->mId,settings.myport,myVector);
-				DEBUG_OUT("set::target node:%lld's right %s\n",targetnode->mId,targetnode->mRight[0]->mKey.toString());
-				DEBUG(targetnode->mRight[0]->dump());
+				for(int i=MAXLEVEL-1;i>=0;--i){
+					if(!targetnode->mRight[i] || *targetkey < targetnode->mRight[i]->mKey){ continue; }
+					chklen = send_treatop(*targetnode->mRight[i]->mAddress,targetnode->mRight[i]->mId,*targetkey,settings.myip,newnode->mId,settings.myport,myVector);
+					DEBUG_OUT("set::target node:%lld's right %s\n",targetnode->mId,targetnode->mRight[i]->mKey.toString());
+					DEBUG(targetnode->mRight[0]->dump());
+					targetflag = 1;
+					break;
+				}
 			}else{
-				chklen = send_treatop(*targetnode->mLeft[0]->mAddress,targetnode->mLeft[0]->mId,*targetkey,settings.myip,newnode->mId,settings.myport,myVector);
-				DEBUG_OUT("set::target node:%lld's left %s\n",targetnode->mId,targetnode->mLeft[0]->mKey.toString());
-				DEBUG(targetnode->mLeft[0]->dump());
+				for(int i=MAXLEVEL;i>=0;--i){
+					if(!targetnode->mLeft[i] || targetnode->mLeft[i]->mKey < *targetkey){ continue; }
+					chklen = send_treatop(*targetnode->mLeft[i]->mAddress,targetnode->mLeft[i]->mId,*targetkey,settings.myip,newnode->mId,settings.myport,myVector);
+					DEBUG_OUT("set::target node:%lld's left %s\n",targetnode->mId,targetnode->mLeft[i]->mKey.toString());
+					DEBUG(targetnode->mLeft[0]->dump());
+					targetflag = 1;
+					break;
+				}
+			}
+			if(targetflag == 0){
+				add = gAddressList.find(settings.myip,settings.myport);
+				chklen = send_treatop(*add,targetnode->mId,*targetkey,settings.myip,newnode->mId,settings.myport,myVector);
 			}
 		}else{
 			add = gAddressList.get_else(settings.myip,settings.myport);
@@ -813,10 +878,16 @@ int memcached_thread(const int socket){
 				serialize_int(buff,&dataindex,settings.myip);
 				serialize_short(buff,&dataindex,settings.targetport);
 				assert(dataindex == datalen);
-				deep_write(targetnode->mLeft[0]->mAddress->mSocket,buff,dataindex);
+				
+				for(int i = MAXLEVEL-1; i>=0; --i){
+					if(*targetkey < targetnode->mLeft[i]->mKey ){
+						deep_write(targetnode->mLeft[0]->mAddress->mSocket,buff,dataindex);
+						suspending->add(*targetkey);
+						gSuspendList.setKey(socket,*targetkey);
+						break;
+					}
+				}
 				free(buff);
-				suspending->add(*targetkey);
-				gSuspendList.setKey(socket,*targetkey);
 			}else{
 				dataindex = 0;
 				buff = (char*)malloc(6 + targetkey->mLength + 3 + 10 + 2 + targetnode->getValue().mLength + 2);
@@ -825,7 +896,7 @@ int memcached_thread(const int socket){
 				memcpy(&buff[dataindex]," 0 ", 3); dataindex+=3;
 				dataindex += serialize_int_with_str(&buff[dataindex],targetnode->getValue().mLength);
 				memcpy(&buff[dataindex],"\r\n", 2); dataindex+=2;
-				dataindex += targetnode->getValue().Serialize(&buff[dataindex]);
+				memcpy(&buff[dataindex],targetnode->getValue().mValue,targetnode->getValue().mLength); dataindex+=targetnode->getValue().mLength;
 				memcpy(&buff[dataindex],"\r\n", 2); dataindex+=2;
 				suspending->add(buff);
 			}
@@ -869,7 +940,27 @@ int memcached_thread(const int socket){
 		gRangeQueryList.set_queue(socket,&origin_query);
 		origin_query.mTag.init();
 		
-		range_forward(MAXLEVEL-1,0,*gAddressList.get_some(),*beginkey,*endkey,(char)atoi(buf->tokens[RGET_LEFT_CLOSED].str),(char)atoi(buf->tokens[RGET_RIGHT_CLOSED].str),settings.myip,settings.targetport,&origin_query,true);
+		targetnode = gNodeList.search_by_key(*beginkey);
+		if(targetnode == NULL){
+			assert(!"save some key before range query!");
+		}
+		if(targetnode->getKey() < *beginkey){
+			for(int i = MAXLEVEL-1;i>=0;--i){
+				if(!targetnode->mRight[i] || *beginkey < targetnode->mRight[i]->mKey){ continue; }
+				range_forward(MAXLEVEL-1,0,*targetnode->mRight[i]->mAddress,*beginkey,*endkey,(char)atoi(buf->tokens[RGET_LEFT_CLOSED].str),(char)atoi(buf->tokens[RGET_RIGHT_CLOSED].str),settings.myip,settings.targetport,&origin_query,true);	
+				break;
+			}
+		}else if(*endkey < targetnode->getKey()){
+			for(int i = MAXLEVEL-1;i>=0;--i){
+				if(!targetnode->mLeft[i] || *beginkey < targetnode->mLeft[i]->mKey){ continue; }
+				range_forward(MAXLEVEL-1,0,*targetnode->mLeft[i]->mAddress,*beginkey,*endkey,(char)atoi(buf->tokens[RGET_LEFT_CLOSED].str),(char)atoi(buf->tokens[RGET_RIGHT_CLOSED].str),settings.myip,settings.targetport,&origin_query,true);
+				break;
+			}
+		}else{
+			add = gAddressList.find(settings.myip,settings.myport);
+			range_forward(MAXLEVEL-1,0,*add,*beginkey,*endkey,(char)atoi(buf->tokens[RGET_LEFT_CLOSED].str),(char)atoi(buf->tokens[RGET_RIGHT_CLOSED].str),settings.myip,settings.targetport,&origin_query,true);
+		}
+		
 		free(buff);
 		delete beginkey;
 		delete endkey;
@@ -885,13 +976,10 @@ int memcached_thread(const int socket){
 		break;
 	case memcache_buffer::state_close:
 		//fprintf(stderr,"close!!\n");
-		delete buf;
 		gMemcachedSockets.erase(socket);
-		close(socket);
-		DeleteFlag = 1;
 		//*
 		if(settings.verbose > 2)
-			fprintf(stderr," closed %d\n",socket);
+			fprintf(stderr," client closed %d\n",socket);
 		//*/
 		break;
 	case memcache_buffer::state_error:
@@ -901,7 +989,6 @@ int memcached_thread(const int socket){
 		fprintf(stderr,"error!!\n");
 		gMemcachedSockets.erase(socket);
 		close(socket);
-		DeleteFlag = 1;
 		break;
 	}
 	return DeleteFlag;
@@ -992,9 +1079,10 @@ int main(int argc,char** argv){
 	listen(listening,1);
 	mulio.SetAcceptSocket(listening);
 	mulio.SetCallback(main_thread);
-	mulio.setverbose(512);
+	//DEBUG(mulio.setverbose(512));
 	mulio.run();// accept thread
 	
+	myself = create_tcpsocket();
 	if(settings.targetip == 0){ // I am master
 		sg_Node* minnode;
 		sg_Node* maxnode;
@@ -1005,7 +1093,6 @@ int main(int argc,char** argv){
 		// create left&right end
 		sg_Neighbor *minpointer,*maxpointer;
 		
-		myself = create_tcpsocket();
 		printf("loopback socket:%d\n",myself);
 		myAddress = new address(myself,settings.myip,settings.myport);
 		minpointer = new sg_Neighbor(min,myAddress,minnode->mId);
@@ -1021,8 +1108,6 @@ int main(int argc,char** argv){
 		gNodeList.insert(minnode);
 		gNodeList.insert(maxnode);
 		fprintf(stderr,"min:ID%lld  max:ID%lld level:%d\n",minnode->mId,maxnode->mId,MAXLEVEL);
-		connect_port_ip(myself,settings.myip,settings.myport);
-		mulio.SetSocket(myself);
 	}else {
 		targetsocket = create_tcpsocket();
 		gAddressList.add(targetsocket,settings.targetip,settings.targetport);
@@ -1032,12 +1117,18 @@ int main(int argc,char** argv){
 	}
 	gNodeList.print();
 	
+	connect_port_ip(myself,settings.myip,settings.myport);
+	gAddressList.add(myself,settings.myip,settings.myport);
+	mulio.SetSocket(myself);
+	
 	int memcachesocket = create_tcpsocket();
 	set_reuse(memcachesocket);
 	bind_inaddr_any(memcachesocket,settings.memcacheport);
 	listen(memcachesocket,2048);
 	memcached.SetAcceptSocket(memcachesocket);
+	
 	DEBUG(memcached.setverbose(1));
+	  
 	memcached.SetCallback(memcached_thread);
 	memcached.run();//memcached accept start.
 	pthread_t memcache_worker;
@@ -1046,6 +1137,7 @@ int main(int argc,char** argv){
 	
 	threads = (pthread_t*)malloc((settings.threads-1)*sizeof(pthread_t));
 	while(1){
+		break;
 		DEBUG(break);
 		for(int i=0;i<settings.threads-1;i++){
 			pthread_create(&threads[i],NULL,worker,NULL);
@@ -1059,9 +1151,7 @@ int main(int argc,char** argv){
 			   my_ntoa(settings.myip),settings.myport,my_ntoa(settings.targetip),settings.targetport,
 			   settings.verbose,settings.threads,myVector.mVector);
 	}
-	
-	
-	printf("ok\n");
+	DEBUG_OUT("Ready\n");
 	mulio.eventloop();
 }
 

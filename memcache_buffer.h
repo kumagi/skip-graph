@@ -1,5 +1,5 @@
 #include <string>
-
+#include <fcntl.h>
 enum memcache_buffer_constants{
 	TOKENMAX = 8,
 	SET_KEY = 0,

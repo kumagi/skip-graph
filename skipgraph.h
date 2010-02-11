@@ -1,9 +1,10 @@
 #ifndef SKIPGRAPH
 #define SKIPGRAPH
-#define MAXLEVEL 3
+#define MAXLEVEL 4
 #include "mytcplib.h"
 #include "suspend.hpp"
 #include "MurmurHash2A.cpp"
+#include "MurmurHash2.cpp"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -26,8 +27,8 @@
 #define DEBUG(x) x
 #else
 #define NDEBUG
-#define DEBUG_OUT(...)
-#define DEBUG(...)
+#define DEBUG_OUT(...) 
+#define DEBUG(...) 
 #endif
 
 #endif // DEBUG_MACRO
@@ -67,7 +68,12 @@ enum closed_opened{
 	Opened,
 	Closed,
 };
-
+unsigned int murmurhash_int(int data){
+	return MurmurHash2 (&data, 4, 31 );
+}
+unsigned int murmurhash_bytes(const void* data,int length){
+	return MurmurHash2 (data, length, 31 );
+}
 template<typename obj>
 class hash{
 private:
@@ -826,6 +832,10 @@ public:
 		}
 		return *it;
 	}
+	sg_Node* get_next(const sg_Node& node) const {
+		
+		return NULL;
+	}
 };
 
 
@@ -859,12 +869,14 @@ public:
 	}
 	void dump(void) const {
 		unsigned int flag = 0;
+		fprintf(stderr,"0x");
 		for(int i=length-1;i>=0;i--){
 			if(flag == 1 || (data[i] != 0)){
 				fprintf(stderr,"%02x",data[i]);
 				flag = 1;
 			}
 		}
+		fprintf(stderr,"$");
 	}
 	void setZero(void){
 		length = 0;
@@ -872,8 +884,7 @@ public:
 	}
 	void init(void){
 		length = BUFFSIZE;
-		data = (unsigned char*)malloc(length);
-		
+		data = (unsigned char*)malloc(length);		
 		for(unsigned int i=length-1;i>0;--i){
 			data[i] = 0;
 		}
@@ -887,15 +898,15 @@ public:
 		}
 		data = (unsigned char*)malloc(length);
 		if(length > 0){
-			read(socket,data,length);
+			deep_read(socket,data,length);
 		}
 	}
-	int Serialize(void* buff) const {
+	int Serialize(char* buff) const {
 		unsigned int* intptr = (unsigned int*)buff;
 		*intptr = length;
-		intptr++;
+		unsigned char* charptr = (unsigned char*)buff;
 		if(length > 0){
-			memcpy(&intptr,data,length);
+			memcpy(&charptr[4],data,length);
 		}
 		return 4+length;
 	}
@@ -941,6 +952,16 @@ public:
 	
 	deviding_tag& operator+=(deviding_tag& rhs){
 		unsigned char carry = 0;
+		if(length < rhs.length){
+			length = rhs.length;
+			if(data){
+				free(data);
+			}
+			data = (unsigned char*)malloc(rhs.length);
+			for(unsigned int i = 0;i<length;i++){
+				data[i] = 0;
+			}
+		}
 		int shorter_length = length < rhs.length ? length : rhs.length;
 		
 		for(int i = shorter_length-1; i>=0 ;i--){
@@ -1028,6 +1049,13 @@ public:
 		receive(socket);
 	}
 	
+	void hashing(void){
+		mSize++;
+		mQuery = (char*)realloc(mQuery,mSize);
+		mQuery[mSize-1] = '*';
+		mQuery[mSize] = '\0';
+	}
+	
 	void receive(const int socket){
 		if(mQuery != NULL){
 			free(mQuery);
@@ -1044,7 +1072,7 @@ public:
 		*intptr = mSize;
 		memcpy(&buff[sizeof(int)],mQuery,mSize);
 		mTag.Serialize(&buff[sizeof(int)+mSize]);
-		return this->size() + mTag.size();
+		return sizeof(int) + mSize + mTag.size();
 	}
 	const char* toString(void) const{
 		return mQuery;
@@ -1198,7 +1226,8 @@ public:
 			pthread_mutex_init(&mapmutex,NULL);
 	}
 	bool found(range_query& query,const int socket){
-		std::list<std::pair<range_query, queue_buffer_list> >& list = hashMap[hash_func.calc(query.getData(),query.getLength()) & 511];
+		unsigned int hashed = murmurhash_bytes(query.getData(),query.getLength()) & 511;
+		std::list<std::pair<range_query, queue_buffer_list> >& list = hashMap[hashed];
 		std::list<std::pair<range_query, queue_buffer_list> >::iterator it = list.begin();
 		if(list.empty()){
 			fprintf(stderr,"not found query [%s]\n",query.toString());
@@ -1233,11 +1262,13 @@ public:
 	}
 	bool notfound(range_query& query){
 		pthread_mutex_lock(&mapmutex);
-		std::list<std::pair<range_query, queue_buffer_list> >* list = &hashMap[hash_func.calc(query.getData(),query.getLength()) & 511];
+		unsigned int hashed = murmurhash_bytes(query.getData(),query.getLength()) & 511;
+		std::list<std::pair<range_query, queue_buffer_list> >* list = &hashMap[hashed];
 		std::list<std::pair<range_query, queue_buffer_list> >::iterator it = list->begin();
 		
+		DEBUG_OUT("query set %s to %d\b",query.toString(),hashed);
 		if(list->empty()){
-			fprintf(stderr,"not found query [%s]\n",query.toString());
+			fprintf(stderr,"not found query [%s] hash %d\n",query.toString(),hashed);
 			assert(!"arienai");
 		}
 		while(it != list->end()){
@@ -1249,6 +1280,9 @@ public:
 		assert(it!=list->end());
 		
 		*(const_cast<range_query*>(&it->first)) += query;
+		DEBUG_OUT("marged tag ");
+		DEBUG(it->first.mTag.dump());
+		
 		if(it->first.isComplete()){
 			//fprintf(stderr,"start to send\n");
 			it->second.push_back("END\r\n");
@@ -1262,9 +1296,29 @@ public:
 		return true;
 	}
 	void set_queue(const int socket,range_query* query){
+		unsigned int hashed;
 		query->setSocket(socket);
 		pthread_mutex_lock(&mapmutex);
-		hashMap[hash_func.calc(query->getData(),query->getLength()) & 511].push_back(std::pair<range_query, queue_buffer_list>(*query,queue_buffer_list()));
+		
+		while(1){
+			hashed = murmurhash_bytes(query->getData(),query->getLength()) & 511;
+			std::list<std::pair<range_query, queue_buffer_list> >& list = hashMap[hashed];
+			std::list<std::pair<range_query, queue_buffer_list> >::iterator it = list.begin();
+			while(it != list.end()){
+				if(it->first == *query){
+					query->hashing();
+					hashed = hash_func.calc(query->getData(),query->getLength()) & 511;
+					DEBUG_OUT("hashing!!! to %s\n",query->toString());
+					break;
+				}
+				++it;
+			}
+			if(it == list.end()){
+				break;
+			}
+		}
+		DEBUG_OUT("query set %s to %d",query->toString(),hashed);
+		hashMap[hashed].push_back(std::pair<range_query, queue_buffer_list>(*query,queue_buffer_list()));
 		pthread_mutex_unlock(&mapmutex);
 	}
 private:
@@ -1295,13 +1349,14 @@ private:
 		buff= (char*)malloc(6 + length + 3 + 12);
 		memcpy(&buff[offset],"VALUE ",6);   offset+=6;
 		offset += read(socket, &buff[offset], length);
+		DEBUG(buff[offset] = '\0');
+		DEBUG_OUT("key:%s",&buff[offset-length]);
 		memcpy(&buff[offset]," 0 ",3);  offset+=3;
 		deep_read(socket, &length,sizeof(int));
 		offset += set_digit(&buff[offset], length);
 		memcpy(&buff[offset], "\r\n", 2); offset += 2;
 		buff[offset] = '\0';
 		list->push_back(buff);
-		
 		buff= (char*)malloc(6 + length + 3 + 10); offset = 0;
 		offset += deep_read(socket, &buff[offset], length);
 		memcpy(&buff[offset], "\r\n", 2); offset+=2;
@@ -1507,14 +1562,22 @@ void range_forward(const unsigned int level,
 				   range_query* query,
 				   const bool alltag_send)
 {
-	const int bufflen = 1 + 8 + 4 + begin.size() + end.size() + 1 + 1 + 4 + 2 + query->size();
-	int buffindex = 0;
 	deviding_tag newtag;
-	char* buff = (char*)malloc(bufflen);
-	//fprintf(stderr,"range forward:[%s-%s] %s\n",begin.toString(),end.toString(),query->toString());
+	DEBUG_OUT("rangeing tag");
+	DEBUG(query->mTag.dump());
 	if(!alltag_send){
 		newtag /= query->mTag;
+	}else{
+		newtag = query->mTag;
 	}
+	DEBUG_OUT("->");
+	DEBUG(newtag.dump());
+	DEBUG_OUT("\n");
+	const int bufflen = 1 + 8 + 4 + begin.size() + end.size() + 1 + 1 + 4 + 2 + query->size();
+	int buffindex = 0;
+	char* buff = (char*)malloc(bufflen);
+	//fprintf(stderr,"range forward:[%s-%s] %s\n",begin.toString(),end.toString(),query->toString());
+	
 	
 	if(settings.verbose > 3){
 		print_range(begin,end,left_closed,right_closed);
@@ -1530,11 +1593,7 @@ void range_forward(const unsigned int level,
 	buff[buffindex++] = right_closed;
 	serialize_int(buff,&buffindex,originip);
 	serialize_short(buff,&buffindex,originport);
-	DEBUG_OUT("%d   &&&",buffindex);
 	buffindex += query->Serialize(&(buff[buffindex]));
-	
-	DEBUG_OUT("%d  %d  %d&&&\n",query->size(),query->mTag.size(),buffindex );
-	
 	
 	assert(buffindex == bufflen);
 	send_to_address(&ad,buff,buffindex);

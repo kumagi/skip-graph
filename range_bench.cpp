@@ -164,38 +164,51 @@ void send_recv_query(node range){
 	close(newsocket);
 }
 
-#define QUERY 1
+#define QUERY 10
 int main(void){
-	threadpool<node> threads(10);
-	
+	threadpool<node> threads(32);
+	int queries = 0;
 	double start = get_time(), end;
 	for(int i=0;i<QUERY;i++){
-		node range = node(new range_query("A","C",1,1,aton("133.68.129.212"),htons(11211)));
+		
+		queries++;
+		node range = node(new range_query("0","zzz",1,1,aton("133.68.129.212"),htons(11211)));
 		threads.go(send_recv_query,range);
-		range = node(new range_query("a","d",1,1,aton("133.68.129.212"),htons(11211)));
+		
+		queries++;
+		range = node(new range_query("0","zzy",1,1,aton("133.68.129.213"),htons(11211)));
 		threads.go(send_recv_query,range);
-		range = node(new range_query("a","c",1,1,aton("133.68.129.212"),htons(11211)));
+		
+		queries++;
+		range = node(new range_query("0","zzt",1,1,aton("133.68.129.214"),htons(11211)));
 		threads.go(send_recv_query,range);
-		range = node(new range_query("g","z",1,1,aton("133.68.129.212"),htons(11211)));
+		queries++;
+		range = node(new range_query("0","zzzz",1,1,aton("133.68.129.215"),htons(11211)));
+		threads.go(send_recv_query,range);
+		queries++;
+		range = node(new range_query("0","zzzf",1,0,aton("133.68.129.216"),htons(11211)));
+		threads.go(send_recv_query,range);
+		queries++;
+		range = node(new range_query("0","zzzzz",1,0,aton("133.68.129.217"),htons(11211)));
+		threads.go(send_recv_query,range);
+		queries++;
+		range = node(new range_query("0","zz9",1,0,aton("133.68.129.218"),htons(11211)));
+		threads.go(send_recv_query,range);
+		queries++;
+		range = node(new range_query("0","zzz0",1,1,aton("133.68.129.219"),htons(11211)));
+		threads.go(send_recv_query,range);
+		queries++;
+		range = node(new range_query("0","zzzzl",0,1,aton("133.68.129.220"),htons(11211)));
+		threads.go(send_recv_query,range);
+		queries++;
+		range = node(new range_query("0","zzzz",1,1,aton("133.68.129.221"),htons(11211)));
 		threads.go(send_recv_query,range);
 		/*
-		range = node(new range_query("D","e",1,0,aton("133.68.129.212"),htons(11211)));
-		threads.go(send_recv_query,range);
-		range = node(new range_query("a","f",1,0,aton("133.68.129.217"),htons(11211)));
-		threads.go(send_recv_query,range);
-		range = node(new range_query("a","g",1,0,aton("133.68.129.218"),htons(11211)));
-		threads.go(send_recv_query,range);
-		range = node(new range_query("a","h",1,1,aton("133.68.129.219"),htons(11211)));
-		threads.go(send_recv_query,range);
-		range = node(new range_query("a","i",0,1,aton("133.68.129.220"),htons(11211)));
-		threads.go(send_recv_query,range);
-		range = node(new range_query("a","z",1,1,aton("133.68.129.221"),htons(11211)));
-		threads.go(send_recv_query,range);
 		*/
 	}
 	threads.wait();
 	end = get_time();
-	fprintf(stderr,"%3f sec %d key, %f kps  %f qps\n", end-start, allkey, (double)allkey/(end-start), QUERY*10/(end-start));
+	fprintf(stderr,"%3f sec %d key, %f kps  %f qps\n", end-start, allkey, (double)allkey/(end-start), queries/(end-start));
 	
 	return 0;
 }

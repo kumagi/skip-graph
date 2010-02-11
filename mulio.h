@@ -21,13 +21,13 @@
 #ifndef DEBUG_MACRO
 #define DEBUG_MACRO
 
-#define NDEBUG
 
-#define DEBUG_MODE
+//#define DEBUG_MODE
 #ifdef DEBUG_MODE
 #define DEBUG_OUT(...) fprintf(stderr,__VA_ARGS__)
 #define DEBUG(...) __VA_ARGS__
 #else
+#define NDEBUG
 #define DEBUG_OUT(...)
 #define DEBUG(...)
 #endif
@@ -73,7 +73,7 @@ public:
 	void worker(void);
 	void eventloop(void);
 	void run(void);
-	void setverbose(int v);
+	void setverbose(const int v);
 	mulio(void);
 	~mulio(void);
 };

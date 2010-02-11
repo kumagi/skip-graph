@@ -7,7 +7,7 @@ void mulio::printSocketList(void){
 		++it;
 	}
 }
-void mulio::setverbose(int v){
+void mulio::setverbose(const int v){
 	mode_verbose = v;
 }
 void mulio::SetCallback(int (*cb)(const int)){
@@ -195,7 +195,7 @@ void mulio::eventloop(void){
 		sem_getvalue(&stopper,&semvalue);
 		if(mode_verbose){
 			sem_getvalue(&stopper,&semvalue);
-			fprintf(stderr,"semaphore!! ###[ %d ->",semvalue);
+			fprintf(stderr,"semaphore!! ###[ %d -> ",semvalue);
 		}
 		sem_wait(&stopper);
 		
@@ -205,6 +205,7 @@ void mulio::eventloop(void){
 			fprintf(stderr,"%d ]### receive %d\n",semvalue,socket);
 		}
 		if(socket == 0){
+			continue;
 			assert(!"arienai!!!");
 		}
 		

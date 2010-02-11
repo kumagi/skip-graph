@@ -26,10 +26,16 @@ memcache_buffer::memcache_buffer(int socket):mSocket(socket),mState(state_free),
 	if(socket == 0){
 		fprintf(stderr,"socket is 0, pass\n");
 	}
+	int result = fcntl(socket, F_SETFL, O_NONBLOCK);
+	if(result < 0){
+		perror("memcache server nonblocking");
+	}
 	//fprintf(stderr,"buffer initialized\n");
 }
 memcache_buffer::~memcache_buffer(void){
-	free(mBuff);
+	if(mBuff!=NULL)
+		free(mBuff);
+	mBuff = NULL;
 	close(mSocket);
 }
 
@@ -72,7 +78,8 @@ int memcache_buffer::receive(void){
 		mStart = mChecked;
 	case state_continue:
 		newdata = readmax();
-		if(newdata == 0){
+		if(newdata < 0){
+			tokennum = -1;
 			mState = state_close;
 			break;
 		}
@@ -150,7 +157,7 @@ int memcache_buffer::readmax(void){
 			mReft = mSize;
 			mSize *= 2;
 		}
-		newread = recv(mSocket,&mBuff[mRead],mReft,MSG_DONTWAIT);
+		newread = read(mSocket,&mBuff[mRead],mReft);
 		if(newread > 0){
 			mRead += newread;
 			mReft -= newread;
