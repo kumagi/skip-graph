@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <arpa/inet.h> // inet_aton
 #include <boost/shared_ptr.hpp>
+#include <fcntl.h>
+#include <time.h>
 #include <sys/time.h> // get time of day
 #define MAX_RECVBUF_SIZE (256 * 1024 * 1024)
 
@@ -124,11 +126,13 @@ typedef boost::shared_ptr<range_query> node;
  
 static int allkey  = 0;
 static int cnt = 0;
+static int OK = 1;
 void send_recv_query(node range){
 	int newsocket = create_tcpsocket();
 	socket_maximize_rcvbuf(newsocket);
 	connect_port_ip(newsocket,range->ip(),range->port());
-	
+	fcntl(newsocket, F_SETFL, O_NONBLOCK);
+	setsockopt(newsocket, SOL_SOCKET, SO_REUSEADDR, (void *)&OK, sizeof(OK));
 	// send query
 	range->write_query(newsocket);
 	
@@ -138,15 +142,19 @@ void send_recv_query(node range){
 	int endflag = 0;
 	while(1){
 		int recvsize = read(newsocket,&buff[received],restsize);
-		restsize -= recvsize;
-		received += recvsize;
+		if(recvsize > 0){
+			restsize -= recvsize;
+			received += recvsize;
+		}
 		if(restsize == 0){
-			restsize = size;
-			size *= 2;
+			restsize = size * 2;
+			size *= 3;
 			buff = (char*)realloc(buff,size);
 		}
-		//buff[received] = '\0';
+		usleep(10);
+		if(recvsize > 0){ continue; }
 		// wait for receive 'END'
+		checked = 0;
 		while(checked <= received - 5){
 			if(strncmp(&buff[checked],"END\r\n",5) == 0){
 				endflag = 1;
@@ -164,21 +172,20 @@ void send_recv_query(node range){
 	close(newsocket);
 }
 
-#define QUERY 10
+#define QUERY 1
 int main(void){
-	threadpool<node> threads(32);
+	threadpool<node> threads(11);
 	int queries = 0;
 	double start = get_time(), end;
 	for(int i=0;i<QUERY;i++){
 		
 		queries++;
-		node range = node(new range_query("0","zzz",1,1,aton("133.68.129.212"),htons(11211)));
+		node range = node(new range_query("a","gf",1,1,aton("133.68.129.212"),htons(11211)));
 		threads.go(send_recv_query,range);
-		
+		/*
 		queries++;
 		range = node(new range_query("0","zzy",1,1,aton("133.68.129.213"),htons(11211)));
 		threads.go(send_recv_query,range);
-		
 		queries++;
 		range = node(new range_query("0","zzt",1,1,aton("133.68.129.214"),htons(11211)));
 		threads.go(send_recv_query,range);
@@ -200,10 +207,6 @@ int main(void){
 		queries++;
 		range = node(new range_query("0","zzzzl",0,1,aton("133.68.129.220"),htons(11211)));
 		threads.go(send_recv_query,range);
-		queries++;
-		range = node(new range_query("0","zzzz",1,1,aton("133.68.129.221"),htons(11211)));
-		threads.go(send_recv_query,range);
-		/*
 		*/
 	}
 	threads.wait();

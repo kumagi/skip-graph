@@ -47,6 +47,11 @@ public:
 			threads[i].available = true;
 		}
 	}
+	~threadpool(void){
+		for(int i=0;i<max;i++){
+			pthread_cancel(threads[i].t);
+		}
+	}
 	int go(void (*func)(arg),const arg& param){
 		int success;
 		int it = head;

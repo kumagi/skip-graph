@@ -3,13 +3,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include "skipgraph.h"
 #include <list>
 
 class node{
 public:
 	virtual int send(const int socket) const = 0;
-	virtual int receive(const int socket) = 0;
+	virtual int deserialize(socket_buff* sb) = 0;
 	virtual bool hasPair(void) = 0;
 	virtual ~node(void) {};
 };
@@ -62,8 +61,8 @@ public:
 		return sentlength;
 	}
 	
-	inline int receive(const int socket){
-		return value.Receive(socket);
+	inline int deserialize(socket_buff* sb){
+		return value.Deserialize(sb);
 	}
 	inline bool hasPair(void){
 		return true;
@@ -99,8 +98,8 @@ public:
 		//fprintf(stderr,"send %d bytes[%s]\n",length,str);
 		return sentlength;
 	}
-	int receive(const int){
-		return 0;
+	int deserialize(socket_buff* sb){
+		return sb->deserialize(str,length);
 	}
 	
 	inline bool hasPair(void){
@@ -125,8 +124,8 @@ public:
 	suspend_node(const keytype& key):item(node_kvp<keytype,valuetype>::create(key)){}
 	suspend_node(const char* str):item(node_str::create(str)){}
 	
-	inline int receive(const int socket){
-		return item->receive(socket);
+	inline int receive(socket_buff* sb){
+		return item->deserialize(sb);
 	}
 	inline int send(const int socket) const {
 		int sentlength = item->send(socket); 
@@ -165,14 +164,14 @@ public:
 		counter += cnt;
 	}
 	
-	inline void receive_value(const int socket,const keytype key){
+	inline void receive_value(socket_buff* sb,const keytype key){
 		valuetype* value;
 		value = search_by_key(key);
 		//fprintf(stderr,"received !! %d\n",counter);
 		if (value->mValue == NULL) {
 			--counter;
 		}
-		value->Receive(socket);
+		value->Deserialize(sb);
 	}
 	
 	inline void decrement_cnt(void){

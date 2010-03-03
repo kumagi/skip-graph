@@ -2,9 +2,11 @@
 #define SKIPGRAPH
 #define MAXLEVEL 4
 #include "mytcplib.h"
-#include "suspend.hpp"
 #include "MurmurHash2A.cpp"
 #include "MurmurHash2.cpp"
+#include "socket_buff.hpp"
+#include "key_value.hpp"
+#include "suspend.hpp"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -68,6 +70,11 @@ enum closed_opened{
 	Opened,
 	Closed,
 };
+
+
+
+
+
 unsigned int murmurhash_int(int data){
 	return MurmurHash2 (&data, 4, 31 );
 }
@@ -202,361 +209,6 @@ public:
 		return;
 	}
 };
-/* key */
-
-class AbstractKey {
-public:
-	virtual int Receive(const int socket) = 0;
-	virtual int Serialize(const void* buf) const = 0;
-	virtual ~AbstractKey(void){};
-	virtual bool isMaximum(void) const = 0;
-	virtual bool isMinimum(void) const = 0;
-	virtual void Maximize(void) = 0;
-	virtual void Minimize(void) = 0;
-	virtual int size(void) const = 0;
-	virtual const char* toString(void) const = 0;
-	// virtual operator<();
-	// virtual operator>();
-	// virtual operator==();
-};
-
-// key type: int
-class intkey : public AbstractKey{
-private:
-	//char buff[11];
-public :
-	int mKey;
-	intkey():mKey(0){ };
-	intkey(const int k):mKey(k){ }
-	int Receive(const int socket){
-		int chklen;
-		chklen = deep_read(socket,&mKey,4);
-		return chklen;
-	}
-	int Serialize(const void* buf) const{
-		int* target = (int*)buf;
-		*target = mKey;
-		return 4;
-	}
-	bool isMaximum(void) const {
-		return mKey == 0x7fffffff;
-	}
-	bool isMinimum(void) const {
-		return mKey == (int)0x80000000;
-	}
-	void Maximize(void){
-		mKey = 0x7fffffff;
-	}
-	void Minimize(void){
-		mKey = 0x80000000;
-	}
-	int size(void) const {return 4;}
-	const char* toString(void) const {
-		static char buff[11] = "";
-		unsigned int tmpkey;
-		int caster = 1000000000;
-		char* pchar = buff;
-		if(mKey<0) {
-			*pchar++ = '-';
-			tmpkey = -mKey;
-		}else{
-			tmpkey = mKey;
-		}
-		while(tmpkey/caster == 0) {
-			caster /= 10;
-		}
-		while(tmpkey != 0){
-			*pchar++ = (char)(tmpkey/caster + '0');
-			tmpkey = tmpkey%caster;
-			caster /= 10;
-		}
-		*pchar = '\0';
-		return buff;
-	}
-	bool operator<(const intkey& rightside) const {
-		return mKey < rightside.mKey;
-	}
-	bool operator>(const intkey& rightside) const {
-		return mKey > rightside.mKey;
-	}
-	bool operator==(const intkey& rightside) const {
-		return mKey == rightside.mKey;
-	}
-};
-// key type: char[]
-class strkey : public AbstractKey{
-public:
-	unsigned int mLength;
-	char *mKey;
-	strkey():mLength(1),mKey(NULL){ }
-	strkey(char* k):mLength(strlen(k)),mKey((char*)malloc(mLength+1)){
-		memcpy(mKey,k,mLength);
-		mKey[mLength] = '\0';
-	}
-	strkey(char* k,int length):mLength(length),mKey((char*)malloc(length+1)){
-		memcpy(mKey,k,mLength);
-		mKey[mLength] = '\0';
-	}
-	strkey(const strkey& k):mLength(k.mLength),mKey((char*)malloc(k.mLength+1)){
-		memcpy(mKey,k.mKey,mLength);
-		mKey[mLength] = '\0';
-	}
-	strkey(int tmpkey):mLength(0),mKey((char*)malloc(11)){
-		int caster = 1000000000;
-		char* pchar = mKey;
-		if(tmpkey<0) {
-			*pchar++ = '-';
-			tmpkey = -tmpkey;
-			mLength++;
-		}
-		while(tmpkey/caster == 0) {
-			caster /= 10;
-		}
-		while(tmpkey != 0){
-			*pchar++ = (char)(tmpkey/caster + '0');
-			mLength++;
-			tmpkey = tmpkey%caster;
-			caster /= 10;
-		}
-		*pchar = '\0';
-	}
-	int Receive(const int socket){
-		if(mKey != NULL) {
-			free(mKey);
-			mKey = NULL;
-		}
-		read(socket,&mLength,4);
-		if(mLength == 0){
-			mKey = NULL;
-			return 4;
-		}
-		mKey = (char*)malloc(mLength+1);
-		read(socket,mKey,mLength);
-		if(mLength == 1 && mKey[0] == '\0'){
-			Minimize();
-			return 5;
-		}
-		
-		mKey[mLength] = '\0';
-		return mLength + 4;
-	}
-	int Serialize(const void* buf) const {
-		int* intptr;
-		char* charptr;
-		if(isMaximum()){
-			intptr = (int*)buf;
-			*intptr = 0;
-			return 4;
-		}else if(isMinimum()){
-			intptr = (int*)buf;
-			*intptr = 1;
-			charptr = (char*)buf+4;
-			*charptr = '\0';
-			return 5;
-		}
-		intptr = (int*)buf;
-		*intptr = mLength;
-		charptr = (char*)buf;
-		charptr += 4;
-		memcpy(charptr,mKey,mLength);
-		return mLength + 4;
-	}
-	void Maximize(void){
-		if(mKey != NULL){
-			free(mKey);
-		}
-		mKey = NULL;
-		mLength = 0;
-	}
-	void Minimize(void){
-		if(mKey != NULL){
-			free(mKey);
-		}
-		mKey = (char*)malloc(1);
-		*mKey = '\0';
-		mLength=1;
-	}
-	bool isMaximum(void) const {
-		return mLength == 0;
-	}
-	bool isMinimum(void) const {
-		if(mKey == NULL) {
-			return 0;
-		}
-		return *mKey == '\0' && mLength == 1;
-	}
-	int size(void)const{
-		return mLength + 4;
-	}
-	const char* toString(void) const{
-		if(isMaximum()){
-			return "*MAX*";
-		}else if(isMinimum()){
-			return "*MIN*";
-		}
-		return mKey;
-	}
-	~strkey(void){
-		if(mKey != NULL){
-			free(mKey);
-		}
-		mKey = NULL;
-	}
-	bool operator<(const strkey& right) const {
-		if((!isMaximum() && right.isMaximum()) || (isMinimum() && !right.isMinimum())) {
-			return true;
-		}else if(isMaximum() || right.isMinimum()){
-			return false;
-		}
-		return strcmp(mKey,right.mKey) < 0;
-	}
-	bool operator>(const strkey& right) const {
-		if((!isMinimum() && right.isMinimum()) || (isMaximum() && !right.isMaximum())) {
-			return true;
-		}else if(isMinimum() || right.isMaximum()){
-			return false;
-		}
-		//fprintf(stderr,"%s > %s ?\n",toString(),right.toString());
-		return strcmp(mKey,right.mKey) > 0;
-	}
-	bool operator==(const strkey& right) const{
-		if((isMinimum() && right.isMinimum()) || (isMaximum() && right.isMaximum())){
-			return true;
-		}else if(isMinimum() || isMaximum() || right.isMinimum() || right.isMaximum()){
-			return false;
-		}
-		return (mLength == right.mLength) && (strncmp(mKey,right.mKey,mLength) == 0); 
-	}
-	strkey& operator=(const strkey& rhs) {
-		if(mKey != NULL){
-			free(mKey);
-		}
-		mLength = rhs.mLength;
-		mKey = (char*)malloc(rhs.mLength+1);
-		memcpy(mKey,rhs.mKey,mLength);
-		mKey[mLength] = '\0';
-		return *this;
-	}
-};
-class AbstractValue{
-public:
-	virtual int Receive(const int socket) = 0;
-	virtual int Serialize(const void* buf) const = 0;
-	virtual int size(void) const = 0;
-	virtual const char* toString(void) const = 0;
-	virtual ~AbstractValue(void){};
-};
-
-// value type: int
-class intvalue : public AbstractValue{
-public :
-	int mValue;
-	intvalue(void):mValue(0){}
-	intvalue(const int v):mValue(v){}
-	
-	int Receive(const int socket){
-		int chklen;
-		chklen = read(socket,&mValue,4);
-		return chklen;
-	}
-	int Serialize(const void* buf)const {
-		int* target = (int*)buf;
-		*target = mValue;
-		return 4;
-	}
-	const char* toString(void) const {
-		static char buff[11] = "";
-		int tmpvalue = mValue;
-		int caster = 1000000000;
-		char* pchar = buff;
-		if(tmpvalue<0) {
-			*pchar++ = '-';
-			tmpvalue = -tmpvalue;
-		}
-		while(tmpvalue/caster == 0) {
-			caster /= 10;
-		}
-		while(tmpvalue != 0){
-			*pchar++ = (char)(tmpvalue/caster + '0');
-			tmpvalue = tmpvalue%caster;
-			caster /= 10;
-		}
-		*pchar = '\0';
-		return buff;		
-	}
-	int size(void)const {return 4;}
-};
-// value type: char[]
-class strvalue : public AbstractValue{
-public:
-	unsigned int mLength;
-	char* mValue;
-	strvalue(void):mLength(0),mValue(NULL) {}
-	strvalue(const char* v):mLength(strlen(v)),mValue((char*)malloc(mLength+1)){
-		memcpy(mValue,v,mLength);
-		mValue[mLength] = '\0';
-	}
-	strvalue(const char* v,const int len):mLength(len),mValue((char*)malloc(mLength+1)){
-		memcpy(mValue,v,mLength);
-		mValue[mLength] = '\0';
-	}
-	strvalue(const strvalue& v):mLength(v.mLength),mValue((char*)malloc(v.mLength+1)){
-		memcpy(mValue,v.mValue,mLength);
-		mValue[mLength] = '\0';
-	}
-	strvalue(int v):mLength(0),mValue((char*)malloc(11)){
-		int caster = 1000000000;
-		char* pchar = mValue;
-		if(v<0) {
-			*pchar++ = '-';
-			v = -v;
-			mLength++;
-		}
-		while(v/caster == 0) {
-			caster /= 10;
-		}
-		while(v != 0){
-			*pchar++ = (char)(v/caster + '0');
-			mLength++;
-			v = v%caster;
-			caster /= 10;
-		}
-		*pchar = '\0';
-	}
-	int Receive(const int socket){
-		if(mValue != NULL) {
-			free(mValue);
-		}
-		read(socket,&mLength,4);
-		mValue = (char*)malloc(mLength+1);
-		deep_read(socket,mValue,mLength);
-		mValue[mLength] = '\0';
-		return mLength + 4;
-	}
-	int Serialize(const void* buf) const {
-		int* intptr = (int*)buf;
-		*intptr = mLength;
-		char* charptr = (char*)buf;
-		charptr += 4;
-		memcpy(charptr,mValue,mLength);
-		return mLength + 4;
-	}
-	strvalue& operator=(const strvalue& v){
-		mLength = v.mLength;
-		mValue = (char*)malloc(mLength+1);
-		strcpy(mValue,v.mValue);
-		return *this;
-	}
-	const char* toString(void) const {
-		if(mLength==0){
-			return "";
-		}
-		return mValue;
-	}
-	int size(void) const {
-		return mLength + 4; 
-	}
-};
 
 template<typename KeyType>
 class sg_neighbor{
@@ -605,10 +257,10 @@ public:
 			mRight[i] = NULL;
 		}
 	}
-	inline const KeyType& getKey(void){
+	inline const KeyType& getKey(void) const{
 		return mKey;
 	}
-	inline const ValueType& getValue(void){
+	inline const ValueType& getValue(void) const{
 		return mValue;
 	}
 								  
@@ -630,10 +282,21 @@ public:
 		fprintf(stderr,"\n");
 			
 	}
-	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const
-	{
+	bool operator<(const class sg_node<KeyType,ValueType>& rightside) const{
 		return mKey < rightside.mKey;
 	}
+	
+	/*
+	sg_node& operator=(const sg_node<KeyType,ValueType>& rhs){
+		mKey = rhs.mKey;
+		mValue = rhs.mValue;
+		mId = rhs.mId;
+		for(int i=0;i<MAXLEVEL;i++){
+			mLeft[i] = rhs.mLeft[i];
+			mRight[i] = rhs.mRight[i];
+		}
+	}
+	*/
 	/*
 	void easydump(void)const {
 		fprintf(stderr,"%lld:%s\n",mId,mKey.toString());
@@ -686,8 +349,7 @@ public:
 	void printVector(void) const
 	{
 		unsigned int upper = (unsigned int)(mVector>>32);
-		printf("vector:%x%x\n",upper,(unsigned int)mVector);
-		printf("\n");
+		fprintf(stderr,"vector:%x%x\n",upper,(unsigned int)mVector);
 	}
 	int compare(const long long mv) const{
 		int count = 0;
@@ -707,8 +369,8 @@ public:
 		return mVector;
 	}
 	
-	int receive(const int socket){
-		return deep_read(socket,&mVector,8);
+	int deserialize(socket_buff* sb){
+		return sb->deserialize(&mVector,8);
 	}
 	
 	bool operator==(membership_vector rightside){
@@ -832,9 +494,17 @@ public:
 		}
 		return *it;
 	}
-	sg_Node* get_next(const sg_Node& node) const {
-		
-		return NULL;
+	sg_Node* get_next(sg_Node& node) {
+		typename std::list<sg_Node*>::iterator it = nodeList.begin();
+		while( it != nodeList.end() && (*it)->getKey() < node.getKey() ){
+			++it;
+		}
+		++it;
+		if (it == nodeList.end()){
+			return NULL;
+		}else{
+			return *it;
+		}
 	}
 };
 
@@ -880,6 +550,9 @@ public:
 	}
 	void setZero(void){
 		length = 0;
+		if(data){
+			free(data);
+		}
 		data = NULL;
 	}
 	void init(void){
@@ -891,14 +564,14 @@ public:
 		data[0] = 1;
 	}
 	
-	void receive(const int socket){
-		read(socket,&length,sizeof(unsigned int));
+	void deserialize(socket_buff* sb){
+		sb->deserialize(&length,sizeof(unsigned int));
 		if(data != NULL){
 			free(data);
 		}
 		data = (unsigned char*)malloc(length);
 		if(length > 0){
-			deep_read(socket,data,length);
+			sb->deserialize(data,length);
 		}
 	}
 	int Serialize(char* buff) const {
@@ -959,9 +632,10 @@ public:
 					data[i] = 0;
 				}
 			}else{
+				DEBUG_OUT("marging tag\n");
 				data = (unsigned char*)malloc(rhs.length);
 				for(unsigned int i = 0;i<rhs.length;i++){
-					data[i] = 0;
+					data[i] = rhs.data[i];
 				}
 			}
 			length = rhs.length;
@@ -1049,8 +723,8 @@ public:
 		mQuery[mSize] = '\0';
 	}
 	
-	range_query(const int socket) :mSize(0),mQuery(NULL),mSocket(0),mTag(){
-		receive(socket);
+	range_query(socket_buff* sb) :mSize(0),mQuery(NULL),mSocket(0),mTag(){
+		deserialize(sb);
 	}
 	
 	void hashing(void){
@@ -1060,16 +734,16 @@ public:
 		mQuery[mSize] = '\0';
 	}
 	
-	void receive(const int socket){
+	void deserialize(socket_buff* sb){
 		if(mQuery != NULL){
 			free(mQuery);
 			mQuery = NULL;
 		}
-		deep_read(socket,(char*)&mSize,sizeof(int));
+		sb->deserialize((char*)&mSize,sizeof(int));
 		mQuery = (char*)malloc(mSize+1);
-		deep_read(socket,mQuery,mSize);
+		sb->deserialize(mQuery,mSize);
 		mQuery[mSize] = '\0';
-		mTag.receive(socket);
+		mTag.deserialize(sb);
 	}
 	int Serialize(char* buff)const{
 		unsigned int* intptr = (unsigned int*)buff;
@@ -1133,10 +807,9 @@ public:
 };
 	// container of range queue value
 class queue_buffer{
-private:
+public:
 	char* data;
 	int size;
-public:
 	queue_buffer(void):data(NULL) { }
 	queue_buffer(const queue_buffer& buff){
 		size = buff.size;
@@ -1172,6 +845,7 @@ public:
 	int send(const int socket) const{
 		return deep_write(socket,data,size);
 	}
+	
 	queue_buffer& operator=(queue_buffer& rhs){
 		/* caution
 		 * It's movement, not copy */
@@ -1209,10 +883,21 @@ public:
 		list.push_back(queue_buffer(string));
 	}
 	void send_all(const int socket){
-		while(list.size()>0){
-			list.front().send(socket);
+		std::list<queue_buffer>::iterator it = list.begin();
+		int length = 0;
+		while(it != list.end()){
+			length += it->size;
+			++it;
+		}
+		char* buff = (char*)malloc(length);
+		int index = 0;
+		while(!list.empty()){
+			memcpy(&buff[index],list.front().data,list.front().size);
+			index += list.front().size;
 			list.pop_front();
 		}
+		deep_write(socket,buff,index);
+		free(buff);
 	}
 };
 
@@ -1229,7 +914,7 @@ public:
 		DEBUG(foundnum = 0;)
 			pthread_mutex_init(&mapmutex,NULL);
 	}
-	bool found(range_query& query,const int socket){
+	bool found(range_query& query,socket_buff* sb){
 		unsigned int hashed = murmurhash_bytes(query.getData(),query.getLength()) & 511;
 		std::list<std::pair<range_query, queue_buffer_list> >& list = hashMap[hashed];
 		std::list<std::pair<range_query, queue_buffer_list> >::iterator it = list.begin();
@@ -1249,8 +934,8 @@ public:
 		DEBUG_OUT("foundnum %d\n",foundnum);
 		
 		*(const_cast<range_query*>(&it->first)) += query;
-		receive_and_set_kvp(socket,&(it->second));
-		DEBUG_OUT("marged tag ");
+		receive_and_set_kvp(sb,&(it->second));
+		DEBUG_OUT(" marged tag ");
 		DEBUG(it->first.mTag.dump());
 		
 		if(it->first.isComplete()){
@@ -1264,13 +949,54 @@ public:
 		}
 		return true;
 	}
+	void found_noTag(range_query& query,const strkey& key,const strvalue& value){
+		deviding_tag tmptag = query.mTag;
+		query.mTag.setZero();
+		found(query,key,value);
+		query.mTag = tmptag;
+		DEBUG_OUT("notag add key:%s\n",key.toString());
+	}
+	void found(range_query& query,const strkey& key,const strvalue& value){
+		unsigned int hashed = murmurhash_bytes(query.getData(),query.getLength()) & 511;
+		std::list<std::pair<range_query, queue_buffer_list> >& list = hashMap[hashed];
+		std::list<std::pair<range_query, queue_buffer_list> >::iterator it = list.begin();
+		if(list.empty()){
+			fprintf(stderr,"not found query [%s]\n",query.toString());
+			assert(!"arienai");
+		}
+		while(it != list.end()){
+			if(it->first == query){
+				break;
+			}
+			++it;
+		}
+		assert(it!=list.end());
+		
+		*(const_cast<range_query*>(&it->first)) += query;
+		
+		int offset=0;
+		char* buff;
+		buff= (char*)malloc(6 + key.mLength + 3 + 12+ 6 + value.mLength + 3 + 10);
+		memcpy(&buff[offset],"VALUE ",6);   offset+=6;
+		memcpy(&buff[offset],key.mKey, key.mLength); offset += key.mLength;
+		
+		
+		memcpy(&buff[offset]," 0 ",3);  offset+=3;
+		offset += set_digit(&buff[offset], key.mLength);
+		memcpy(&buff[offset], "\r\n", 2); offset += 2;
+		memcpy(&buff[offset], value.mValue, value.mLength); offset += value.mLength;
+		memcpy(&buff[offset], "\r\n", 2); offset+=2;
+		buff[offset] = '\0';
+		it->second.push_back(buff);
+		free(buff);
+	}
 	bool notfound(range_query& query){
 		pthread_mutex_lock(&mapmutex);
 		unsigned int hashed = murmurhash_bytes(query.getData(),query.getLength()) & 511;
 		std::list<std::pair<range_query, queue_buffer_list> >* list = &hashMap[hashed];
 		std::list<std::pair<range_query, queue_buffer_list> >::iterator it = list->begin();
 		
-		DEBUG_OUT("query set %s to %d\b",query.toString(),hashed);
+		DEBUG_OUT("not found %s to %d \n",query.toString(),hashed);
 		if(list->empty()){
 			fprintf(stderr,"not found query [%s] hash %d\n",query.toString(),hashed);
 			assert(!"arienai");
@@ -1282,7 +1008,7 @@ public:
 			++it;
 		}
 		assert(it!=list->end());
-		
+		DEBUG(query.mTag.dump());
 		*(const_cast<range_query*>(&it->first)) += query;
 		DEBUG_OUT("marged tag ");
 		DEBUG(it->first.mTag.dump());
@@ -1293,8 +1019,8 @@ public:
 			it->second.send_all(it->first.getSocket());
 			list->erase(it);
 			pthread_mutex_unlock(&mapmutex);
-			DEBUG(foundnum =0;)
-				return true;
+			DEBUG(foundnum =0;);
+			return true;
 		}
 		pthread_mutex_unlock(&mapmutex);
 		return true;
@@ -1345,24 +1071,26 @@ private:
 		}
 		return length;
 	}
-	void receive_and_set_kvp(const int socket,queue_buffer_list* list){// create me
+	void receive_and_set_kvp(socket_buff* sb,queue_buffer_list* list){// create me
 		// it receive left part of RangeFoundOp
 		int length,offset=0;
 		char* buff;
-		deep_read(socket, &length, sizeof(int));
+		sb->deserialize(&length, sizeof(int));
 		buff= (char*)malloc(6 + length + 3 + 12);
 		memcpy(&buff[offset],"VALUE ",6);   offset+=6;
-		offset += read(socket, &buff[offset], length);
+		offset += sb->deserialize(&buff[offset], length);
 		DEBUG(buff[offset] = '\0');
 		DEBUG_OUT("key:%s",&buff[offset-length]);
 		memcpy(&buff[offset]," 0 ",3);  offset+=3;
-		deep_read(socket, &length,sizeof(int));
+		sb->deserialize(&length,sizeof(int)); // value size
 		offset += set_digit(&buff[offset], length);
 		memcpy(&buff[offset], "\r\n", 2); offset += 2;
 		buff[offset] = '\0';
 		list->push_back(buff);
+		
+		free(buff);
 		buff= (char*)malloc(6 + length + 3 + 10); offset = 0;
-		offset += deep_read(socket, &buff[offset], length);
+		offset += sb->deserialize(&buff[offset], length);  // value
 		memcpy(&buff[offset], "\r\n", 2); offset+=2;
 		buff[offset] = '\0';
 		list->push_back(buff);
@@ -1567,16 +1295,11 @@ void range_forward(const unsigned int level,
 				   const bool alltag_send)
 {
 	deviding_tag newtag;
-	DEBUG_OUT("rangeing tag");
-	DEBUG(query->mTag.dump());
 	if(!alltag_send){
 		newtag /= query->mTag;
 	}else{
 		newtag = query->mTag;
 	}
-	DEBUG_OUT("->");
-	DEBUG(newtag.dump());
-	DEBUG_OUT("\n");
 	const int bufflen = 1 + 8 + 4 + begin.size() + end.size() + 1 + 1 + 4 + 2 + query->size();
 	int buffindex = 0;
 	char* buff = (char*)malloc(bufflen);
@@ -1602,7 +1325,7 @@ void range_forward(const unsigned int level,
 	assert(buffindex == bufflen);
 	send_to_address(&ad,buff,buffindex);
 	free(buff);
-	DEBUG_OUT(" send RangeOp to ");
+	DEBUG_OUT(" :send RangeOp to ");
 	DEBUG(ad.dump());
 	DEBUG_OUT(" range ");
 	DEBUG(print_range(begin,end,left_closed,right_closed));

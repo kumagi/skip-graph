@@ -38,7 +38,7 @@ neighbor_list<defkey> gNeighborList;
 node_list<defkey,defvalue> gNodeList;
 address_list gAddressList;
 rquery_list gRangeQueryList;
-suspend_list<defkey,defvalue> gSuspendList;
+suspend_list<strkey,strvalue> gSuspendList;
 
 unsigned int serialize_int_with_str(char* buff,int data){
 	unsigned int length = 0,caster = 1000000000;
@@ -57,6 +57,46 @@ unsigned int serialize_int_with_str(char* buff,int data){
 }
 void print_usage(void);
 void settings_init(void);
+
+
+
+class socket_buffer_pool{
+	std::vector<socket_buff*> buffers;
+	std::vector<int> table;
+	
+public:
+	socket_buffer_pool(void){
+		buffers.push_back(NULL);
+	}
+	socket_buff* socket_dispatch(const unsigned int socket){
+		socket_buff* sb; 
+		if(socket < table.size()){
+			if(table[socket] != 0){
+				sb = buffers[table[socket]];
+			}else{
+				sb = new socket_buff(socket);
+				buffers.push_back(sb);
+				table[socket] = buffers.size()-1;
+			}
+		}else{
+			table.resize(socket, 0);
+			sb = new socket_buff(socket);
+			buffers.push_back(sb);
+			table[socket] = buffers.size()-1;
+		}
+		return sb;
+	}
+	void socket_erase(const unsigned int socket){
+		if(buffers[table[socket]]){
+			delete buffers[table[socket]];
+			buffers[table[socket]] = NULL;
+		}else {
+			assert("!arienai!");
+		}
+		table[socket] = 0;
+	}
+} gSocketBuffers;
+
 
 int main_thread(const int socket){
 	// communication management
@@ -79,632 +119,644 @@ int main_thread(const int socket){
 	char left_closed,right_closed;
 	range_query range_found,range_search;
 	
-	defkey rKey;// received Key
-	defkey sKey;// secondary received Key
+	strkey rKey;// received Key
+	strkey sKey;// secondary received Key
 	
 	defvalue rValue;//received Value
 	int tempFlag;
 	
+	socket_buff* buf = gSocketBuffers.socket_dispatch(socket);
+	assert(buf != NULL);
 	//*
 	if(settings.verbose>1)
-		fprintf(stderr,"socket:%d ",socket);
+		fprintf(stderr,"begin socket %d{ ",socket);
 	// */
 		
 	int DeleteFlag;
-	DeleteFlag = 0;
-	chklen = read(socket,&op,1);
-	if(chklen <= 0){
-		fprintf(stderr," close %d",socket);
-		perror("  ");
-		close(socket);
-		gAddressList.erase(socket);
-		DeleteFlag = 1;
-		return DeleteFlag;
-	}
-	switch(op){
-	case SearchOp:
-		if(settings.verbose>1){
-			fprintf(stderr,"Search op\n");
+	do{
+		DeleteFlag = buf->read_max();
+		if(!buf->isLeft() && DeleteFlag ){
+			break;
 		}
-		read(socket,&targetid,8);
-		targetnode = gNodeList.search_by_id(targetid);
-		assert(targetnode!=NULL);
-			
-		rKey.Receive(socket);
-		read(socket,&targetlevel,4);
-		read(socket,&targetip,4);
-		read(socket,&targetport,2); 
-		//DEBUG_OUT("received searchkey:%s mykey:%s\n",rKey.toString(),targetnode->getKey().toString());
-			
-		if(rKey == targetnode->getKey()){
-			//send FoundOP
-			if(settings.verbose>1)
-				fprintf(stderr,"found in ID:%lld\n",targetnode->mId);
-			//prepare buffer
-			buffindex = 0;
-			bufflen = 1 + targetnode->getKey().size() + targetnode->getValue().size();
-			buff = (char*)malloc(bufflen);
-			//serialize
-			buff[buffindex++] = FoundOp;
-			buffindex += targetnode->getKey().Serialize(&buff[buffindex]);
-			buffindex += targetnode->getValue().Serialize(&buff[buffindex]);
-			assert(buffindex == bufflen);
-				
-			originaddress = gAddressList.find(targetip,targetport);
-			if(originaddress != NULL){
-				send_to_address(originaddress,buff,bufflen);
-			}else{
-				connect_send_close(targetip,targetport,buff,bufflen);
+		//DEBUG(buf->dump());
+		chklen = buf->deserialize(&op,1);
+		switch(op){
+		case SearchOp:
+			if(settings.verbose>1){
+				fprintf(stderr,"Search op\n");
 			}
-			free(buff);
-		}else{
-			DEBUG_OUT("%s : %s ?\n",rKey.toString(), targetnode->getKey().toString());
-			if(rKey > targetnode->getKey()){
-				//send SearchOP to Rightside
-				left_or_right = Right;
-				for(;targetlevel>=0;targetlevel--){
-					if(!(targetnode->mRight[targetlevel])) continue;
-					DEBUG_OUT("r compare:%s : %s ?\n" ,targetnode->mRight[targetlevel]->mKey.toString(),rKey.toString());
-					if(!(targetnode->mRight[targetlevel]->mKey > rKey)) break;
-				}
-			}else{
-				//send SearchOcP to Leftside
-				left_or_right = Left;
-				for(;targetlevel>=0;targetlevel--){
-					if(!(targetnode->mLeft[targetlevel]))continue;
-					DEBUG_OUT("l compare:%s : %s ?\n",rKey.toString(), targetnode->mLeft[targetlevel]->mKey.toString());
-					if(!(targetnode->mLeft[targetlevel]->mKey < rKey)) break;
-				}
-			}
-			DEBUG_OUT("level:%d\n",targetlevel);
-			if(targetlevel >= 0){
-				// passthe message to next node
-				//start creating message and serialize
-				buffindex = 0;
-				bufflen = 1+8+rKey.size()+4+4+2;//[OP id key level ip port]
-				buff = (char*)malloc(bufflen);
-				buff[0] = SearchOp;
-				buffindex+=1;
-					
-				if(left_or_right == Right){
-					serialize_longlong(buff,&buffindex,targetnode->mRight[targetlevel]->mId);
-				}else{
-					serialize_longlong(buff,&buffindex,targetnode->mLeft[targetlevel]->mId);
-				}
-				buffindex+=rKey.Serialize(&buff[buffindex]);
-				serialize_int(buff,&buffindex,targetlevel);
-				serialize_int(buff,&buffindex,targetip);
-				serialize_short(buff,&buffindex,targetport);
-					
-				assert(bufflen == buffindex && "buffsize ok");
-	  
-				if(left_or_right == Right){
-					send_to_address(targetnode->mRight[targetlevel]->mAddress,buff,bufflen);
-				}else{
-					send_to_address(targetnode->mLeft[targetlevel]->mAddress,buff,bufflen);
-				}
-				free(buff);
-			}else{
-				//send NotfoundOP
+			buf->deserialize(&targetid,8);
+			targetnode = gNodeList.search_by_id(targetid);
+			assert(targetnode!=NULL);
+			
+			rKey.Deserialize(buf);
+			buf->deserialize(&targetlevel,4);
+			buf->deserialize(&targetip,4);
+			buf->deserialize(&targetport,2);
+			DEBUG_OUT("received searchkey:%s mykey:%s\n",rKey.toString(),targetnode->getKey().toString());
+			
+			if(rKey == targetnode->getKey()){
+				//send FoundOP
 				if(settings.verbose>1)
-					fprintf(stderr,"Notfound\n");
+					fprintf(stderr,"found in ID:%lld\n",targetnode->mId);
 				//prepare buffer
 				buffindex = 0;
-				bufflen = 1 + rKey.size() + targetnode->getKey().size();
+				bufflen = 1 + targetnode->getKey().size() + targetnode->getValue().size();
 				buff = (char*)malloc(bufflen);
 				//serialize
-				buff[buffindex] = NotfoundOp;
-				buffindex+=1;
-				buffindex+=rKey.Serialize(&buff[buffindex]);
-				buffindex+=targetnode->getKey().Serialize(&buff[buffindex]);
-	  
-				//send and cleanup
+				buff[buffindex++] = FoundOp;
+				buffindex += targetnode->getKey().Serialize(&buff[buffindex]);
+				buffindex += targetnode->getValue().Serialize(&buff[buffindex]);
+				assert(buffindex == bufflen);
+				
 				originaddress = gAddressList.find(targetip,targetport);
-				if(originaddress != NULL){
-					send_to_address(originaddress,buff,bufflen);
-				}else{
-					connect_send_close(targetip,targetport,buff,bufflen);
+				if(originaddress == NULL){
+					newsocket = create_tcpsocket();
+					connect_port_ip(newsocket,targetip,targetport);
+					targetaddress = gAddressList.add(newsocket,targetip,targetport);
+					assert(gAddressList.find(originip,originport) != NULL);
 				}
+				send_to_address(originaddress,buff,bufflen);
 				free(buff);
-			}
-		}
-		break;
-	case RangeOp:// [op] id level [beginkey] [endkey] [left_closed] [right_closed] [originip] [originport] [origin_range_query]
-		if(settings.verbose>1)
-			fprintf(stderr,"RangeOP ");
-			
-		read(socket,&targetid,8);
-		targetnode = gNodeList.search_by_id(targetid);
-			
-		if(targetnode == NULL) {
-			DEBUG_OUT("ID:%lld not found!\n", targetid);
-			gNodeList.print();
-			assert(!"arienai");
-		}
-		read(socket,&targetlevel,4);
-			
-		rKey.Receive(socket); // begin key
-		sKey.Receive(socket); // end key
-			
-		read(socket,&left_closed,1); // 0->open(<) 1->closed(<=)
-		read(socket,&right_closed,1); // 0->open(<) 1->cloaed(<=)
-			
-		// managers address
-		read(socket,&targetip,4);
-		read(socket,&targetport,2);
-		
-		// identifier and devided tag
-		range_search.receive(socket);
-		
-		// range forward query
-		originlevel = targetlevel;
-		if(sKey < targetnode->getKey()){// range is out of mine
-			tempFlag = 0;
-			for(int i=originlevel;i>=0;i--){
-				if(!targetnode->mLeft[i] || targetnode->mLeft[i]->mKey < rKey) continue;
-				range_forward(originlevel,targetnode->mLeft[i]->mId,*(targetnode->mLeft[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport,&range_search,true);
-				tempFlag = 1;
-				break;
-			}
-			if(tempFlag == 1){
-				break;
-			}
-			
-			// not found
-			DEBUG_OUT(" :RangeNotFoundOp\n");
-			buffindex = 0;
-			buff = (char*)malloc(1+range_search.size());
-			buff[buffindex++] = RangeNotFoundOp;
-			buffindex += range_search.Serialize(&buff[buffindex]);
+			}else{
+				DEBUG_OUT("%s : %s ?\n",rKey.toString(), targetnode->getKey().toString());
+				if(rKey > targetnode->getKey()){
+					//send SearchOP to Rightside
+					left_or_right = Right;
+					for(;targetlevel>=0;targetlevel--){
+						if(!(targetnode->mRight[targetlevel])) continue;
+						DEBUG_OUT("r compare:%s : %s ?\n" ,targetnode->mRight[targetlevel]->mKey.toString(),rKey.toString());
+						if(!(targetnode->mRight[targetlevel]->mKey > rKey)) break;
+					}
+				}else{
+					//send SearchOcP to Leftside
+					left_or_right = Left;
+					for(;targetlevel>=0;targetlevel--){
+						if(!(targetnode->mLeft[targetlevel]))continue;
+						DEBUG_OUT("l compare:%s : %s ?\n",rKey.toString(), targetnode->mLeft[targetlevel]->mKey.toString());
+						if(!(targetnode->mLeft[targetlevel]->mKey < rKey)) break;
+					}
+				}
+				DEBUG_OUT("level:%d\n",targetlevel);
+				if(targetlevel >= 0){
+					// passthe message to next node
+					//start creating message and serialize
+					buffindex = 0;
+					bufflen = 1+8+rKey.size()+4+4+2;//[OP id key level ip port]
+					buff = (char*)malloc(bufflen);
+					buff[0] = SearchOp;
+					buffindex+=1;
 					
-			originaddress = gAddressList.find(targetip,targetport);
-			if(originaddress != NULL){
-				send_to_address(originaddress,buff,buffindex);
-			}else{
-				connect_send_close(targetip,targetport,buff,buffindex);
+					if(left_or_right == Right){
+						serialize_longlong(buff,&buffindex,targetnode->mRight[targetlevel]->mId);
+					}else{
+						serialize_longlong(buff,&buffindex,targetnode->mLeft[targetlevel]->mId);
+					}
+					buffindex+=rKey.Serialize(&buff[buffindex]);
+					serialize_int(buff,&buffindex,targetlevel);
+					serialize_int(buff,&buffindex,targetip);
+					serialize_short(buff,&buffindex,targetport);
+					
+					assert(bufflen == buffindex && "buffsize ok");
+	  
+					if(left_or_right == Right){
+						send_to_address(targetnode->mRight[targetlevel]->mAddress,buff,bufflen);
+					}else{
+						send_to_address(targetnode->mLeft[targetlevel]->mAddress,buff,bufflen);
+					}
+					free(buff);
+				}else{
+					//send NotfoundOP
+					if(settings.verbose>1)
+						fprintf(stderr,"Notfound\n");
+					//prepare buffer
+					buffindex = 0;
+					bufflen = 1 + rKey.size() + targetnode->getKey().size();
+					buff = (char*)malloc(bufflen);
+					//serialize
+					buff[buffindex] = NotfoundOp;
+					buffindex+=1;
+					buffindex+=rKey.Serialize(&buff[buffindex]);
+					buffindex+=targetnode->getKey().Serialize(&buff[buffindex]);
+	  
+					//send and cleanup
+					originaddress = gAddressList.find(targetip,targetport);
+					if(originaddress == NULL){
+						newsocket = create_tcpsocket();
+						connect_port_ip(newsocket,targetip,targetport);
+						targetaddress = gAddressList.add(newsocket,targetip,targetport);
+						assert(gAddressList.find(originip,originport) != NULL);
+					}
+					send_to_address(originaddress,buff,buffindex);
+					free(buff);
+				}
 			}
-			free(buff);
 			break;
-		}else if(targetnode->getKey() < rKey){
-			tempFlag = 0;
-			for(int i=originlevel;i>=0;i--){
-				if(!targetnode->mRight[i] || sKey < targetnode->mRight[i]->mKey) continue;
-				range_forward(originlevel,targetnode->mRight[i]->mId,*(targetnode->mRight[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport,&range_search,true);
-				tempFlag = 1;
-				break;
+		case RangeOp:// [op] id level [beginkey] [endkey] [left_closed] [right_closed] [originip] [originport] [origin_range_query]
+			if(settings.verbose>1)
+				fprintf(stderr,"RangeOP ");
+			
+			buf->deserialize(&targetid,8);
+			targetnode = gNodeList.search_by_id(targetid);
+			
+			if(targetnode == NULL) {
+				DEBUG_OUT("ID:%lld not found!\n", targetid);
+				gNodeList.print();
+				assert(!"arienai");
 			}
-			if(tempFlag == 1){
+			buf->deserialize(&targetlevel,4);
+			
+			rKey.Deserialize(buf); // begin key
+			sKey.Deserialize(buf); // end key
+			
+			buf->deserialize(&left_closed,1); // 0->open(<) 1->closed(<=)
+			buf->deserialize(&right_closed,1); // 0->open(<) 1->cloaed(<=)
+			
+			// managers address
+			buf->deserialize(&targetip,4);
+			buf->deserialize(&targetport,2);
+		
+			// identifier and devided tag
+			range_search.deserialize(buf);
+		
+			// range forward query
+			originlevel = targetlevel;
+			if(sKey < targetnode->getKey()){// range is out of mine
+				tempFlag = 0;
+				for(int i=originlevel;i>=0;i--){
+					if(!targetnode->mLeft[i] || targetnode->mLeft[i]->mKey < rKey) continue;
+					range_forward(originlevel,targetnode->mLeft[i]->mId,*(targetnode->mLeft[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport,&range_search,true);
+					tempFlag = 1;
+					break;
+				}
+				if(tempFlag == 1){
+					break;
+				}
+			
+				// not found
+				DEBUG_OUT(" :RangeNotFoundOp\n");
+				buffindex = 0;
+				buff = (char*)malloc(1+range_search.size());
+				buff[buffindex++] = RangeNotFoundOp;
+				buffindex += range_search.Serialize(&buff[buffindex]);
+					
+				originaddress = gAddressList.find(targetip,targetport);
+				if(originaddress == NULL){
+					newsocket = create_tcpsocket();
+					connect_port_ip(newsocket,targetip,targetport);
+					targetaddress = gAddressList.add(newsocket,targetip,targetport);
+					assert(gAddressList.find(originip,originport) != NULL);
+				}
+				send_to_address(originaddress,buff,buffindex);
+				
+				free(buff);
+				break;
+			}else if(targetnode->getKey() < rKey){
+				tempFlag = 0;
+				for(int i=originlevel;i>=0;i--){
+					if(!targetnode->mRight[i] || sKey < targetnode->mRight[i]->mKey) continue;
+					range_forward(originlevel,targetnode->mRight[i]->mId,*(targetnode->mRight[i]->mAddress),rKey,sKey,left_closed,right_closed,targetip,targetport,&range_search,true);
+					tempFlag = 1;
+					break;
+				}
+				if(tempFlag == 1){
+					break;
+				}
+			
+				// not found
+				DEBUG_OUT(" :RangeNotFoundOp\n");
+				buffindex = 0;
+				buff = (char*)malloc(1+range_search.size());
+				buff[buffindex++] = RangeNotFoundOp;
+				buffindex += range_search.Serialize(&buff[buffindex]);
+			
+				originaddress = gAddressList.find(targetip,targetport);
+				if(originaddress == NULL){
+					newsocket = create_tcpsocket();
+					connect_port_ip(newsocket,targetip,targetport);
+					targetaddress = gAddressList.add(newsocket,targetip,targetport);
+					assert(gAddressList.find(originip,originport) != NULL);
+				}
+				send_to_address(originaddress,buff,buffindex);
+				
+				free(buff);
 				break;
 			}
 			
-			// not found
-			DEBUG_OUT(" :RangeNotFoundOp\n");
+			//left side
+			//DEBUG_OUT("left side\n");
+			if( rKey < targetnode->getKey()){
+				for(int i=originlevel ;i>=0; i--){
+					if(!(targetnode->mLeft[i]) || ((!left_closed) && targetnode->mLeft[i]->mKey == rKey) || targetnode->mLeft[i]->mKey < rKey) continue;
+					DEBUG_OUT(" range forward to %s ",targetnode->mLeft[i]->mKey.toString());
+					range_forward(i,  targetnode->mLeft[i]->mId,  *(targetnode->mLeft[i]->mAddress), rKey, targetnode->mLeft[i]->mKey, left_closed,  1 , targetip, targetport, &range_search, false);
+					left_closed = 0;
+					rKey = targetnode->mLeft[i]->mKey;
+				}
+			}
+			//right side
+			if( targetnode->getKey() < sKey){
+				for(int i=originlevel ;i>=0; i--){
+					if(!(targetnode->mRight[i]) || ((!right_closed) && targetnode->mRight[i]->mKey == sKey) || sKey < targetnode->mRight[i]->mKey) continue;
+					DEBUG_OUT(" range forward to %s ",targetnode->mRight[i]->mKey.toString());
+					range_forward(i, targetnode->mRight[i]->mId, *(targetnode->mRight[i]->mAddress), targetnode->mRight[i]->mKey, sKey, 1, right_closed, targetip, targetport, &range_search, false);
+					right_closed = 0;
+					sKey = targetnode->mRight[i]->mKey;
+				}
+			}
+			
+			// send RangeFoundOp to origin
 			buffindex = 0;
-			buff = (char*)malloc(1+range_search.size());
-			buff[buffindex++] = RangeNotFoundOp;
+			bufflen = 1 + targetnode->getKey().size() + targetnode->getValue().size() + range_search.size();
+			buff = (char*)malloc(bufflen);
+			buff[buffindex++] = RangeFoundOp;
 			buffindex += range_search.Serialize(&buff[buffindex]);
+			buffindex += targetnode->getKey().Serialize(&buff[buffindex]);
+			buffindex += targetnode->getValue().Serialize(&buff[buffindex]);
+		
+			assert(buffindex == bufflen);
 			
+			DEBUG_OUT("\nsending RangeFoundOp %s\n to ",targetnode->getKey().toString());
 			originaddress = gAddressList.find(targetip,targetport);
 			if(originaddress != NULL){
-				send_to_address(originaddress,buff,buffindex);
+			
+				send_to_address(originaddress,buff,bufflen);
 			}else{
-				connect_send_close(targetip,targetport,buff,buffindex);
+				newsocket = create_tcpsocket();
+				connect_port_ip(newsocket,targetip,targetport);
+				mulio.SetSocket(newsocket);
+				originaddress = gAddressList.add(newsocket,targetip,targetport);
+				assert(gAddressList.find(targetip,targetport) != NULL);
+				send_to_address(originaddress,buff,bufflen);
 			}
+			DEBUG(range_search.mTag.dump());
 			free(buff);
+			DEBUG_OUT("RangeOp end\n");
 			break;
-		}
-			
-		//left side
-		//DEBUG_OUT("left side\n");
-		if( rKey < targetnode->getKey()){
-			for(int i=originlevel ;i>=0; i--){
-				if(!(targetnode->mLeft[i]) || ((!left_closed) && targetnode->mLeft[i]->mKey == rKey) || targetnode->mLeft[i]->mKey < rKey) continue;
-				DEBUG_OUT(" range forward to %s ",targetnode->mLeft[i]->mKey.toString());
-				range_forward(i,  targetnode->mLeft[i]->mId,  *(targetnode->mLeft[i]->mAddress), rKey, targetnode->mLeft[i]->mKey, left_closed,  1 , targetip, targetport, &range_search, false);
-				left_closed = 0;
-				rKey = targetnode->mLeft[i]->mKey;
-			}
-		}
-		//right side
-		if( targetnode->getKey() < sKey){
-			for(int i=originlevel ;i>=0; i--){
-				if(!(targetnode->mRight[i]) || ((!right_closed) && targetnode->mRight[i]->mKey == sKey) || sKey < targetnode->mRight[i]->mKey) continue;
-				DEBUG_OUT(" range forward to %s ",targetnode->mRight[i]->mKey.toString());
-				range_forward(i, targetnode->mRight[i]->mId, *(targetnode->mRight[i]->mAddress), targetnode->mRight[i]->mKey, sKey, 1, right_closed, targetip, targetport, &range_search, false);
-				right_closed = 0;
-				sKey = targetnode->mRight[i]->mKey;
-			}
-		}
-			
-		// send RangeFoundOp to origin
-		buffindex = 0;
-		bufflen = 1 + targetnode->getKey().size() + targetnode->getValue().size() + range_search.size();
-		buff = (char*)malloc(bufflen);
-		buff[buffindex++] = RangeFoundOp;
-		buffindex += range_search.Serialize(&buff[buffindex]);
-		buffindex += targetnode->getKey().Serialize(&buff[buffindex]);
-		buffindex += targetnode->getValue().Serialize(&buff[buffindex]);
-		
-		assert(buffindex == bufflen);
-			
-		DEBUG_OUT("\nsending RangeFoundOp %s\n to ",targetnode->getKey().toString());
-		originaddress = gAddressList.find(targetip,targetport);
-		if(originaddress != NULL){
-			
-			send_to_address(originaddress,buff,bufflen);
-		}else{
-			newsocket = create_tcpsocket();
-			connect_port_ip(newsocket,targetip,targetport);
-			mulio.SetSocket(newsocket);
-			originaddress = gAddressList.add(newsocket,targetip,targetport);
-			assert(gAddressList.find(targetip,targetport) != NULL);
-			send_to_address(originaddress,buff,bufflen);
-		}
-		DEBUG(range_search.mTag.dump());
-		free(buff);
-		DEBUG_OUT("RangeOp end  ");
-		break;
-	case PrepareOp:
+		case PrepareOp:
 			
 			
-		break;
-	case LinkOp://id,key,originip,originid,originport,level,LorR
-		if(settings.verbose>1)
-			fprintf(stderr,"LinkOP ");
+			break;
+		case LinkOp://id,key,originip,originid,originport,level,LorR
+			if(settings.verbose>1)
+				fprintf(stderr,"LinkOP ");
  
-		read(socket,&targetid,8);
-		targetnode = gNodeList.search_by_id(targetid);
+			buf->deserialize(&targetid,8);
+			targetnode = gNodeList.search_by_id(targetid);
 			
-		rKey.Receive(socket);
-		read(socket,&originip,4);
-		read(socket,&originid,8);
-		read(socket,&originport,2); 
-		read(socket,&targetlevel,4);
-		read(socket,&left_or_right,1);
-		if(targetnode == NULL) {
-			DEBUG_OUT("ID:%lld not found!\n", targetid);
-			DEBUG_OUT("key:%s level:%d\n",rKey.toString(),targetlevel);
-			gNodeList.print();
-			assert(!"arienai");
-		}
+			rKey.Deserialize(buf);
+			buf->deserialize(&originip,4);
+			buf->deserialize(&originid,8);
+			buf->deserialize(&originport,2); 
+			buf->deserialize(&targetlevel,4);
+			buf->deserialize(&left_or_right,1);
+			
+			
+			if(targetnode == NULL) {
+				DEBUG_OUT("ID:%lld not found!\n", targetid);
+				DEBUG_OUT("key:%s level:%d\n",rKey.toString(),targetlevel);
+				gNodeList.print();
+				assert(!"arienai");
+			}
 		
-		originaddress = gAddressList.find(originip,originport);
-		if(originaddress == NULL){
-			originaddress = gAddressList.add(socket,originip,originport);
-			DEBUG(originaddress->dump());
-		}
+			originaddress = gAddressList.find(originip,originport);
+			if(originaddress == NULL){
+				originaddress = gAddressList.add(socket,originip,originport);
+				DEBUG(originaddress->dump());
+			}
 			
-		DEBUG_OUT("target:%s from:%s\ttargetlevel:%d\n",targetnode->getKey().toString(),rKey.toString(),targetlevel);
+			DEBUG_OUT("target:%s from:%s\ttargetlevel:%d\n",targetnode->getKey().toString(),rKey.toString(),targetlevel);
 			
-		if(left_or_right == Left){
-			DEBUG_OUT(" %s -> %s\t targetlevel:%d\n",rKey.toString(),targetnode->getKey().toString(),targetlevel);
-			targetnode->mLeft[targetlevel] = gNeighborList.retrieve(rKey,originid,originaddress);
-		}else{
-			DEBUG_OUT(" %s <- %s\t targetlevel:%d\n",targetnode->getKey().toString(),rKey.toString(),targetlevel);
-			targetnode->mRight[targetlevel] = gNeighborList.retrieve(rKey,originid,originaddress);
-		}
+			if(left_or_right == Left){
+				DEBUG_OUT(" %s -> %s\t targetlevel:%d\n",rKey.toString(),targetnode->getKey().toString(),targetlevel);
+				targetnode->mLeft[targetlevel] = gNeighborList.retrieve(rKey,originid,originaddress);
+			}else{
+				DEBUG_OUT(" %s <- %s\t targetlevel:%d\n",targetnode->getKey().toString(),rKey.toString(),targetlevel);
+				targetnode->mRight[targetlevel] = gNeighborList.retrieve(rKey,originid,originaddress);
+			}
 		
-		if(targetlevel == 0){
-			DEBUG(targetnode->dump());
-			sus = gSuspendList.search(targetnode->getKey());
-			if(sus){
-				sus->decrement_cnt();
+			if(targetlevel == 0){
+				sus = gSuspendList.search(targetnode->getKey());
+				if(sus){
+					sus->decrement_cnt();
+					if(sus->send_if_can()){
+						gSuspendList.erase(targetnode->getKey());
+						//fprintf(stderr,"done\n\n");
+					}
+				}else{
+					DEBUG_OUT("suspend not found!\n");
+				}
+			}
+			DEBUG_OUT("end of LinkOp\n");
+			break;
+		case FoundOp:
+			if(settings.verbose>1)
+				fprintf(stderr,"  FoundOP ");
+			rKey.Deserialize(buf);
+			sus = gSuspendList.search(rKey);
+			if(sus != NULL){
+				sus->receive_value(buf,rKey);
 				if(sus->send_if_can()){
-					gSuspendList.erase(targetnode->getKey());
-					//fprintf(stderr,"done\n\n");
+					gSuspendList.erase(rKey);
 				}
 			}else{
-				DEBUG_OUT("suspend not found!\n");
+				rValue.Deserialize(buf);
 			}
-		}
-		
-		DEBUG_OUT("end of LinkOp\n");
-		break;
-	case FoundOp:
-		if(settings.verbose>1)
-			fprintf(stderr,"  FoundOP ");
-		rKey.Receive(socket);
-		sus = gSuspendList.search(rKey);
-		if(sus != NULL){
-			sus->receive_value(socket,rKey);
+			fprintf(stderr,"key:%s found!\n",rKey.toString());
+			break;
+		case RangeFoundOp:// [op] [range_query] [Foundkey] [FoundValue]
+			if(settings.verbose>1)
+				fprintf(stderr,"  RangeFoundOP ");
+			range_found.deserialize(buf);
+			DEBUG_OUT(" query is {%s} ",range_found.toString());
+			DEBUG(range_found.mTag.dump());
+			gRangeQueryList.found(range_found,buf);
+			if(range_found.mTag.isComplete()){
+				DEBUG_OUT("----------range query done.-------------\n");
+			}
+			DEBUG_OUT("RangeFoundOp end\n");
+			break;
+		case RangeNotFoundOp:// [op] [range_query]
+			if(settings.verbose>1)
+				fprintf(stderr,"  RangeNotFoundOP ");
+			range_found.deserialize(buf);
+			DEBUG_OUT(" query is {%s} ",range_found.toString());
+			DEBUG(range_found.mTag.dump());
+			gRangeQueryList.notfound(range_found);
+			DEBUG_OUT("RangeNotFoundOp end\n");
+			break;
+		case NotfoundOp:
+			if(settings.verbose>1)
+				fprintf(stderr,"NotfoundOP ");
+			rKey.Deserialize(buf);
+			
+			sus = gSuspendList.search(rKey);
+			assert(sus != NULL);
+			sus->decrement_cnt();
 			if(sus->send_if_can()){
 				gSuspendList.erase(rKey);
 			}
-		}else{
-			rValue.Receive(socket);
-		}
-		fprintf(stderr,"key:%s found!\n",rKey.toString());
-		break;
-	case RangeFoundOp:// [op] [range_query] [Foundkey] [FoundValue]
-		if(settings.verbose>1)
-			fprintf(stderr,"  RangeFoundOP ");
-		range_found.receive(socket);
-		DEBUG_OUT(" query is {%s} ",range_found.toString());
-		DEBUG(range_found.mTag.dump());
-		gRangeQueryList.found(range_found,socket);
-		if(range_found.mTag.isComplete()){
-			DEBUG_OUT("----------range query done.-------------\n");
-		}
-		DEBUG_OUT("\n");
-		break;
-	case RangeNotFoundOp:// [op] [range_query]
-		if(settings.verbose>1)
-			fprintf(stderr,"  RangeNotFoundOP ");
-		range_found.receive(socket);
-		DEBUG_OUT(" query is {%s} ",range_found.toString());
-		DEBUG(range_found.mTag.dump());
-		gRangeQueryList.notfound(range_found);
-		DEBUG_OUT("\n");
-		break;
-	case NotfoundOp:
-		if(settings.verbose>1)
-			fprintf(stderr,"NotfoundOP ");
-		rKey.Receive(socket);
 			
-		sus = gSuspendList.search(rKey);
-		assert(sus != NULL);
-		sus->decrement_cnt();
-		if(sus->send_if_can()){
-			gSuspendList.erase(rKey);
-		}
-			
-		//fprintf(stderr,"key:%s not found ! ",rKey.toString());
-		rKey.Receive(socket);
-		//fprintf(stderr,"nearest key:%s\n",rKey.toString());
-		DEBUG_OUT("ok\n");
-		break;
-	case SetOp:
-		if(settings.verbose>1)
-			fprintf(stderr,"SetOP ");
-			
-		rKey.Receive(socket);
-		rValue.Receive(socket);
-			
-		targetnode = gNodeList.search_by_key(rKey);
-		if(targetnode->getKey() == rKey){
-			targetnode->changeValue(rValue);
-		}
-		//fprintf(stderr,"key:%s ,value:%s set in ID:%lld\n",rKey.toString(),rValue.toString(),newnode->mId);
-		gNodeList.print();
-		//fprintf(stderr,"end of SetOP\n");
-			
-		//DeleteFlag = 1;
-		break;
-	case TreatOp://targetid,key,originip,originid,originport,originvector
-		// if you are nearest to origin, connect origin in level 0
-		if(settings.verbose>1){
-			fprintf(stderr,"TreatOP\n");
-		}
-			
-		read(socket,&targetid,8);
-		targetnode = gNodeList.search_by_id(targetid);
-		if(targetnode == NULL) {
-			DEBUG_OUT("ID:%lld not found!\n", targetid);
-			gNodeList.print();
-			assert(!"arienai");
-		}
-			
-		rKey.Receive(socket);
-		read(socket,&originip,4);
-		read(socket,&originid,8);
-		read(socket,&originport,2);
-		originvector.receive(socket);
-		
-		
-		DEBUG_OUT("%lld:%s treating key:%s\n IP:%s\n",
-				  targetnode->mId,targetnode->getKey().toString(),rKey.toString(),my_ntoa(originip));
-			
-		if(rKey == targetnode->getKey() && originip == settings.myip && originport == settings.myport && originvector == myVector.mVector){
-			assert(!"boomerang of TreatOP");
-		}
-		if(rKey == targetnode->getKey()){
+			//fprintf(stderr,"key:%s not found ! ",rKey.toString());
+			rKey.Deserialize(buf);
+			//fprintf(stderr,"nearest key:%s\n",rKey.toString());
+			DEBUG_OUT("ok\n");
+			break;
+		case SetOp:
 			if(settings.verbose>1)
-				fprintf(stderr,"received key:%s but I already have it\n",rKey.toString());
-			//FIXME: move the node
-				
-		}else{
-			targetlevel = MAXLEVEL-1;
-			if(rKey > targetnode->getKey()){
-				//send TreatOP to Rightside
-				left_or_right = Right;
-				for(;targetlevel>=0;targetlevel--){
-					if(!targetnode->mRight[targetlevel]) continue;
-					if(!(targetnode->mRight[targetlevel]->mKey > rKey)) break;
-				}
-			}else{
-				//send TreatOP to Leftside
-				left_or_right = Left;
-				for(;targetlevel>=0;targetlevel--){
-					if(!targetnode->mLeft[targetlevel]) continue;
-					if(!(targetnode->mLeft[targetlevel]->mKey < rKey)) break;
-				}
-			}
-			if(targetlevel >= 0){
-				//pass LinkOP
-				if(settings.verbose>1)
-					fprintf(stderr,"passing TreatOP at level:%d\n",targetlevel);
-				
-				if(left_or_right == Right){
-					send_treatop(*targetnode->mRight[targetlevel]->mAddress,targetnode->mRight[targetlevel]->mId,rKey,originip,originid,originport,originvector);
-				}else{
-					send_treatop(*targetnode->mLeft[targetlevel]->mAddress,targetnode->mLeft[targetlevel]->mId,rKey,originip,originid,originport,originvector);
-				}
-			}else{
-				if(settings.verbose>1)
-					fprintf(stderr,"finally treated by ID:%lld key:%s\n",targetnode->mId,targetnode->getKey().toString());
-					
-				// begin treating new node
-				//send IntroduceOP to opposite site
-				if(left_or_right == Left && targetnode->mLeft[0]){
-					DEBUG_OUT("opposite introduceOp from %s to left %s by socket:%d\n",targetnode->getKey().toString(),targetnode->mLeft[0]->mKey.toString(),targetnode->mLeft[0]->mAddress->mSocket);
-					send_introduceop(*targetnode->mLeft[0]->mAddress,targetnode->mLeft[0]->mId,rKey,originid,originip,originport,-1,originvector);
-				}else if(left_or_right == Right && targetnode->mRight[0]) {
-					DEBUG_OUT("opposite introduceOp from %s to Right %s by socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[0]->mKey.toString(),targetnode->mRight[0]->mAddress->mSocket);
-					send_introduceop(*targetnode->mRight[0]->mAddress,targetnode->mRight[0]->mId,rKey,originid,originip,originport,-1,originvector);
-				}else{
-					assert(targetnode->getKey().isMaximum() || targetnode->getKey().isMinimum());
-				}
-					
-				//LinkOp to new node
-				//decide how much level to link
-				targetlevel = myVector.compare(originvector);
-				//myVector.printVector();
-				DEBUG_OUT("level:%d matched\n",targetlevel);
-				targetlevel = targetlevel < MAXLEVEL-1 ? targetlevel : MAXLEVEL-1;
-				
-				// retrieve address
-				targetaddress = gAddressList.find(originip,originport);
-				if(targetaddress == NULL){
-					newsocket = create_tcpsocket();
-					connect_port_ip(newsocket,originip,originport);
-					mulio.SetSocket(newsocket);
-					targetaddress = gAddressList.add(newsocket,originip,originport);
-					assert(gAddressList.find(originip,originport) != NULL);
-				}
-				
-				for(int i=0;i<=targetlevel;i++){
-					send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,inverse(left_or_right));
-					if(left_or_right == Left){
-						DEBUG_OUT(":Link %s <- %s   level %d/%d by socket:%d\n",rKey.toString(),targetnode->getKey().toString(),i,targetlevel,targetaddress->mSocket);
-						targetnode->mLeft[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
-					}else{
-						DEBUG_OUT(":Link %s -> %s   level %d/%d by socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetlevel,targetaddress->mSocket);
-						targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
-					}
-				}
-					
-				if(targetlevel < MAXLEVEL-1){
-					if(left_or_right == Left){
-						if(targetnode->mRight[targetlevel]){
-							DEBUG_OUT("start IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
-							send_introduceop(*targetnode->mRight[targetlevel]->mAddress,targetnode->mRight[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
-						}else{
-							DEBUG_OUT("end of rightside\n");
-						}
-					}else{
-						if(targetnode->mLeft[targetlevel]){
-							DEBUG_OUT("start IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mLeft[targetlevel]->mKey.toString(),targetlevel,targetnode->mLeft[targetlevel]->mAddress->mSocket);
-							send_introduceop(*targetnode->mLeft[targetlevel]->mAddress,targetnode->mLeft[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
-						}else{
-							DEBUG_OUT("end of leftside\n");
-						}
-					}
-				}
-			}
-		}
-		if(settings.verbose>1)
-			fprintf(stderr,"end of TreatOP\n");
-		break;
-	case IntroduceOp:
-		if(settings.verbose>1)
-			fprintf(stderr,"IntroduceOP ");
+				fprintf(stderr,"SetOP ");
 			
-		read(socket,&targetid,8);
-		targetnode = gNodeList.search_by_id(targetid);
+			rKey.Deserialize(buf);
+			rValue.Deserialize(buf);
 			
-		rKey.Receive(socket);
-		read(socket,&originip,4);
-		read(socket,&originid,8);
-		read(socket,&originport,2);
-		read(socket,&originlevel,4);
-		read(socket,&originvector,8);
-		
-		if(targetnode == NULL) {
-			DEBUG_OUT("ID:%lld not found!\n", targetid);
-			DEBUG_OUT("key:%s level:%d\n",rKey.toString(),targetlevel);
+			targetnode = gNodeList.search_by_key(rKey);
+			if(targetnode->getKey() == rKey){
+				targetnode->changeValue(rValue);
+			}
+			//fprintf(stderr,"key:%s ,value:%s set in ID:%lld\n",rKey.toString(),rValue.toString(),newnode->mId);
 			gNodeList.print();
-			assert(!"arienai");
-		}
-		
-		DEBUG_OUT("new ID:%lld,key:%s\n",originid,rKey.toString());
+			//fprintf(stderr,"end of SetOP\n");
 			
-		left_or_right = direction(targetnode->getKey(), rKey);
-			
-		//LinkOp to new node
-		targetlevel = myVector.compare(originvector);
-		targetlevel = targetlevel < MAXLEVEL-1 ? targetlevel : MAXLEVEL-1;
-			
-		// retrieve address
-		targetaddress = gAddressList.find(originip,originport);
-		if(targetaddress == NULL){
-			newsocket = create_tcpsocket();
-			DEBUG_OUT("new socket %d: ",newsocket);
-			connect_port_ip(newsocket,originip,originport);
-			mulio.SetSocket(newsocket);
-			targetaddress = gAddressList.add(newsocket,originip,originport);
-		}
-			
-		if(left_or_right == Left){
-			for(int i=originlevel+1;i<=targetlevel;i++){
-				DEBUG_OUT(":Link %s <- %s   at level %d by socket:%d\n",rKey.toString(),targetnode->getKey().toString(),i, targetaddress->mSocket);
-				send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,Right);
-				targetnode->mLeft[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
+			//DeleteFlag = 1;
+			break;
+		case TreatOp://targetid,key,originip,originid,originport,originvector
+			// if you are nearest to origin, connect origin in level 0
+			if(settings.verbose>1){
+				fprintf(stderr,"TreatOP\n");
 			}
-		}else{
-			for(int i=originlevel+1;i<=targetlevel;i++){
-				DEBUG_OUT(":Link %s -> %s   at level %d by socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i, targetaddress->mSocket);
-				send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,Left);
-				targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
-			}
-		}
 			
-		if(targetlevel < MAXLEVEL-1){
-			if(left_or_right == Left){
-				if(targetnode->mRight[targetlevel]){
-					DEBUG_OUT("relay IntroduceOP from %s to %s at level %d by socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
-					send_introduceop(*targetnode->mRight[targetlevel]->mAddress,targetnode->mRight[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
+			buf->deserialize(&targetid,8);
+			targetnode = gNodeList.search_by_id(targetid);
+			if(targetnode == NULL) {
+				DEBUG_OUT("ID:%lld not found!\n", targetid);
+				gNodeList.print();
+				assert(!"arienai");
+			}
+			
+			rKey.Deserialize(buf);
+			buf->deserialize(&originip,4);
+			buf->deserialize(&originid,8);
+			buf->deserialize(&originport,2);
+			originvector.deserialize(buf);
+			
+			//----------dumping---------
+			DEBUG_OUT("[TreatOp] %lld %s %s %lld %d ",targetid,rKey.toString(),my_ntoa(originip),originid,originport);
+			DEBUG(originvector.printVector());
+			DEBUG_OUT("\n");
+			//--------------------------
+			DEBUG_OUT("%lld:%s treating key:%s\n IP:%s\n",
+					  targetnode->mId,targetnode->getKey().toString(),rKey.toString(),my_ntoa(originip));
+			
+			if(rKey == targetnode->getKey() && originip == settings.myip && originport == settings.myport && originvector == myVector.mVector){
+				assert(!"boomerang of TreatOP");
+			}
+			if(rKey == targetnode->getKey()){
+				if(settings.verbose>1)
+					fprintf(stderr,"received key:%s but I already have it\n",rKey.toString());
+				//FIXME: move the node
+				
+			}else{
+				targetlevel = MAXLEVEL-1;
+				if(rKey > targetnode->getKey()){
+					//send TreatOP to Rightside
+					left_or_right = Right;
+					for(;targetlevel>=0;targetlevel--){
+						if(!targetnode->mRight[targetlevel]) continue;
+						if(!(targetnode->mRight[targetlevel]->mKey > rKey)) break;
+					}
 				}else{
-					DEBUG_OUT("end of rightside\n");
+					//send TreatOP to Leftside
+					left_or_right = Left;
+					for(;targetlevel>=0;targetlevel--){
+						if(!targetnode->mLeft[targetlevel]) continue;
+						if(!(targetnode->mLeft[targetlevel]->mKey < rKey)) break;
+					}
+				}
+				if(targetlevel >= 0){
+					//pass LinkOP
+					if(settings.verbose>1)
+						fprintf(stderr,"passing TreatOP at level:%d\n",targetlevel);
+				
+					if(left_or_right == Right){
+						send_treatop(*targetnode->mRight[targetlevel]->mAddress,targetnode->mRight[targetlevel]->mId,rKey,originip,originid,originport,originvector);
+					}else{
+						send_treatop(*targetnode->mLeft[targetlevel]->mAddress,targetnode->mLeft[targetlevel]->mId,rKey,originip,originid,originport,originvector);
+					}
+				}else{
+					if(settings.verbose>1)
+						fprintf(stderr,"finally treated by ID:%lld key:%s\n",targetnode->mId,targetnode->getKey().toString());
+					
+					// begin treating new node
+					//send IntroduceOP to opposite site
+					if(left_or_right == Left && targetnode->mLeft[0]){
+						DEBUG_OUT("opposite introduceOp from %s to left %s by socket:%d\n",targetnode->getKey().toString(),targetnode->mLeft[0]->mKey.toString(),targetnode->mLeft[0]->mAddress->mSocket);
+						send_introduceop(*targetnode->mLeft[0]->mAddress,targetnode->mLeft[0]->mId,rKey,originid,originip,originport,-1,originvector);
+					}else if(left_or_right == Right && targetnode->mRight[0]) {
+						DEBUG_OUT("opposite introduceOp from %s to Right %s by socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[0]->mKey.toString(),targetnode->mRight[0]->mAddress->mSocket);
+						send_introduceop(*targetnode->mRight[0]->mAddress,targetnode->mRight[0]->mId,rKey,originid,originip,originport,-1,originvector);
+					}else{
+						assert(targetnode->getKey().isMaximum() || targetnode->getKey().isMinimum());
+					}
+					
+					//LinkOp to new node
+					//decide how much level to link
+					targetlevel = myVector.compare(originvector);
+					//myVector.printVector();
+					DEBUG_OUT("level:%d matched\n",targetlevel);
+					targetlevel = targetlevel < MAXLEVEL-1 ? targetlevel : MAXLEVEL-1;
+				
+					// retrieve address
+					targetaddress = gAddressList.find(originip,originport);
+					if(targetaddress == NULL){
+						newsocket = create_tcpsocket();
+						connect_port_ip(newsocket,originip,originport);
+						mulio.SetSocket(newsocket);
+						targetaddress = gAddressList.add(newsocket,originip,originport);
+						assert(gAddressList.find(originip,originport) != NULL);
+					}
+				
+					for(int i=0;i<=targetlevel;i++){
+						send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,inverse(left_or_right));
+						if(left_or_right == Left){
+							DEBUG_OUT(":Link %s <- %s   level %d/%d by socket:%d\n",rKey.toString(),targetnode->getKey().toString(),i,targetlevel,targetaddress->mSocket);
+							targetnode->mLeft[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
+						}else{
+							DEBUG_OUT(":Link %s -> %s   level %d/%d by socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i,targetlevel,targetaddress->mSocket);
+							targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
+						}
+					}
+					
+					if(targetlevel < MAXLEVEL-1){
+						if(left_or_right == Left){
+							if(targetnode->mRight[targetlevel]){
+								DEBUG_OUT("start IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
+								send_introduceop(*targetnode->mRight[targetlevel]->mAddress,targetnode->mRight[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
+							}else{
+								DEBUG_OUT("end of rightside\n");
+							}
+						}else{
+							if(targetnode->mLeft[targetlevel]){
+								DEBUG_OUT("start IntroduceOP from %s to %s at level %d in socket:%d\n",targetnode->getKey().toString(),targetnode->mLeft[targetlevel]->mKey.toString(),targetlevel,targetnode->mLeft[targetlevel]->mAddress->mSocket);
+								send_introduceop(*targetnode->mLeft[targetlevel]->mAddress,targetnode->mLeft[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
+							}else{
+								DEBUG_OUT("end of leftside\n");
+							}
+						}
+					}
+				}
+			}
+			if(settings.verbose>1)
+				fprintf(stderr,"end of TreatOP\n");
+			break;
+		case IntroduceOp:
+			if(settings.verbose>1)
+				fprintf(stderr,"IntroduceOP ");
+			
+			buf->deserialize(&targetid,8);
+			targetnode = gNodeList.search_by_id(targetid);
+			
+			rKey.Deserialize(buf);
+			buf->deserialize(&originip,4);
+			buf->deserialize(&originid,8);
+			buf->deserialize(&originport,2);
+			buf->deserialize(&originlevel,4);
+			buf->deserialize(&originvector,8);
+			
+			//-----------dumping-------------------
+			DEBUG_OUT("[IntroduceOp] %s %s %lld %d %d",rKey.toString(),my_ntoa(originip),originid,originport,originlevel);
+			DEBUG(originvector.printVector());
+			DEBUG_OUT("\n");
+			
+			//-------------------------------------
+			if(targetnode == NULL) {
+				DEBUG_OUT("ID:%lld not found!\n", targetid);
+				DEBUG_OUT("key:%s level:%d\n",rKey.toString(),targetlevel);
+				gNodeList.print();
+				assert(!"arienai");
+			}
+		
+			DEBUG_OUT("new ID:%lld,key:%s\n",originid,rKey.toString());
+			
+			left_or_right = direction(targetnode->getKey(), rKey);
+			
+			//LinkOp to new node
+			targetlevel = myVector.compare(originvector);
+			targetlevel = targetlevel < MAXLEVEL-1 ? targetlevel : MAXLEVEL-1;
+			
+			// retrieve address
+			targetaddress = gAddressList.find(originip,originport);
+			if(targetaddress == NULL){
+				newsocket = create_tcpsocket();
+				DEBUG_OUT("new socket %d: ",newsocket);
+				connect_port_ip(newsocket,originip,originport);
+				mulio.SetSocket(newsocket);
+				targetaddress = gAddressList.add(newsocket,originip,originport);
+			}
+			
+			if(left_or_right == Left){
+				for(int i=originlevel+1;i<=targetlevel;i++){
+					DEBUG_OUT(":Link %s <- %s   at level %d by socket:%d\n",rKey.toString(),targetnode->getKey().toString(),i, targetaddress->mSocket);
+					send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,Right);
+					targetnode->mLeft[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
 				}
 			}else{
-				if(targetnode->mLeft[targetlevel]){
-					DEBUG_OUT("relay IntroduceOP from %s to %s at level %d by socket:%d\n",targetnode->getKey().toString(),targetnode->mLeft[targetlevel]->mKey.toString(),targetlevel,targetnode->mLeft[targetlevel]->mAddress->mSocket);
-					send_introduceop(*targetnode->mLeft[targetlevel]->mAddress,targetnode->mLeft[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
-				}else{
-					DEBUG_OUT("end of leftside\n");
+				for(int i=originlevel+1;i<=targetlevel;i++){
+					DEBUG_OUT(":Link %s -> %s   at level %d by socket:%d\n",targetnode->getKey().toString(),rKey.toString(),i, targetaddress->mSocket);
+					send_linkop(*targetaddress,originid,targetnode->getKey(),targetnode->mId,i,Left);
+					targetnode->mRight[i] = gNeighborList.retrieve(rKey,originid,targetaddress);
 				}
 			}
-		}else{
-			DEBUG_OUT("end of this side\n");
+			
+			if(targetlevel < MAXLEVEL-1){
+				if(left_or_right == Left){
+					if(targetnode->mRight[targetlevel]){
+						DEBUG_OUT("relay IntroduceOP from %s to %s at level %d by socket:%d\n",targetnode->getKey().toString(),targetnode->mRight[targetlevel]->mKey.toString(),targetlevel,targetnode->mRight[targetlevel]->mAddress->mSocket);
+						send_introduceop(*targetnode->mRight[targetlevel]->mAddress,targetnode->mRight[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
+					}else{
+						DEBUG_OUT("end of rightside\n");
+					}
+				}else{
+					if(targetnode->mLeft[targetlevel]){
+						DEBUG_OUT("relay IntroduceOP from %s to %s at level %d by socket:%d\n",targetnode->getKey().toString(),targetnode->mLeft[targetlevel]->mKey.toString(),targetlevel,targetnode->mLeft[targetlevel]->mAddress->mSocket);
+						send_introduceop(*targetnode->mLeft[targetlevel]->mAddress,targetnode->mLeft[targetlevel]->mId,rKey,originid,originip,originport,targetlevel,originvector);
+					}else{
+						DEBUG_OUT("end of leftside\n");
+					}
+				}
+			}else{
+				DEBUG_OUT("end of this side\n");
+			}
+			DEBUG_OUT("end of IntroduceOp\n");
+			break;
+		case ViewOp:
+			//fprintf(stderr,"view\n");
+			gNodeList.print();
+			break;
+		default:
+			fprintf(stderr,"error: undefined operation %d.\n",op);
 		}
-		DEBUG_OUT("end of IntroduceOp\n");
-		break;
-	case ViewOp:
-		//fprintf(stderr,"view\n");
-		gNodeList.print();
-		break;
-	default:
-		fprintf(stderr,"error: undefined operation %d.\n",op);
-	}
+		buf->read_max();
+	}while(buf->isLeft());
 	//*
 	if(settings.verbose>1)
-		fprintf(stderr,"socket:%d end\n",socket);
+		fprintf(stderr,"}end of socket:%d\n",socket);
 	//*/
 	//mulio.printSocketList();
+	if(DeleteFlag){
+		fprintf(stderr," delete socket %d",socket);
+		int ok = close(socket);
+		if(ok!=0){
+			perror("  ");
+		}
+		fprintf(stderr,"\n");
+		assert(!"connection closed!?");
+		exit(0);
+		gSocketBuffers.socket_erase(socket);
+		gAddressList.erase(socket);
+	}
+	buf->init_ifcan();
 	return DeleteFlag;
 }
-
-
-
-/*
-	TOKENMAX,
-	SET_KEY,
-	SET_FLAGS,
-	SET_EXPTIME,
-	SET_LENGTH,
-	SET_VALUE,
-	GET_KEY,
-	DELETE_KEY,
-	
-	state_free,
-	state_set,
-	state_get,
-	state_delete,
-	state_value, // wait until n byte receive
-	state_continue, // not all data received
-	state_close,
-	state_error,
-*/
 
 class memcached_clients{
 private:
@@ -756,7 +808,7 @@ int memcached_thread(const int socket){
 	int DeleteFlag;
 	defkey* targetkey,*beginkey,*endkey;
 	defvalue* targetvalue;
-	sg_Node *targetnode,*newnode;
+	sg_Node *targetnode,*newnode,*nextnode;
 	std::multimap<defkey,suspend<defkey,defvalue>*>::iterator suspendIt;
 	suspend<defkey,defvalue>* suspending;
 	address* add;
@@ -765,7 +817,7 @@ int memcached_thread(const int socket){
 	int datalen,dataindex;
 	
 	//if(settings.verbose > 2)
-		//	fprintf(stderr,"memcached client arrived socket:%d\n",socket);
+	//	fprintf(stderr,"memcached client arrived socket:%d\n",socket);
 	buf = gMemcachedSockets.retrieve(socket);
 	
 	tokennum = buf->receive();
@@ -944,21 +996,203 @@ int memcached_thread(const int socket){
 		if(targetnode == NULL){
 			assert(!"save some key before range query!");
 		}
-		if(targetnode->getKey() < *beginkey){
-			for(int i = MAXLEVEL-1;i>=0;--i){
-				if(!targetnode->mRight[i] || *beginkey < targetnode->mRight[i]->mKey){ continue; }
-				range_forward(MAXLEVEL-1,0,*targetnode->mRight[i]->mAddress,*beginkey,*endkey,(char)atoi(buf->tokens[RGET_LEFT_CLOSED].str),(char)atoi(buf->tokens[RGET_RIGHT_CLOSED].str),settings.myip,settings.targetport,&origin_query,true);	
-				break;
+		DEBUG_OUT("retrieve range query from key:%s ... ",targetnode->getKey().toString());
+		
+		{// variable namespace
+			char left_closed = (char)atoi(buf->tokens[RGET_LEFT_CLOSED].str);
+			char right_closed = (char)atoi(buf->tokens[RGET_LEFT_CLOSED].str);
+		
+			if(targetnode->getKey() < *beginkey){
+				DEBUG_OUT("leftsize..\n");
+				nextnode = gNodeList.get_next(*targetnode);
+				while(nextnode->getKey() < *beginkey || ((!left_closed) && nextnode->getKey() == *beginkey)){
+					targetnode = nextnode;
+					nextnode = gNodeList.get_next(*targetnode);
+				}
+				if(*beginkey < targetnode->getKey() || targetnode->getKey() < *endkey || (left_closed && targetnode->getKey() == *beginkey) || (right_closed && targetnode->getKey() == *endkey)){
+					gRangeQueryList.found_noTag(origin_query,targetnode->getKey(),targetnode->getValue());
+				}
+				if(*beginkey < targetnode->getKey()){
+					for(int i = MAXLEVEL-2;i>=0;--i){
+						if(!targetnode->mLeft[i] || targetnode->mLeft[i]->mKey < *beginkey){ continue; }
+						range_forward(MAXLEVEL-1,targetnode->mLeft[i]->mId,*targetnode->mLeft[i]->mAddress,*beginkey,targetnode->getKey(),left_closed,0,settings.myip,settings.targetport,&origin_query,false);
+						break;
+					}
+				}
+				nextnode = gNodeList.get_next(*targetnode);
+				if(nextnode != NULL && ((nextnode->getKey() < *endkey) || ((right_closed) && nextnode->getKey() == *endkey)) ){
+					
+					gRangeQueryList.found_noTag(origin_query,nextnode->getKey(),nextnode->getValue());
+					
+					const strkey* tmpend = &nextnode->getKey();
+					for(int i = MAXLEVEL-2;i>=0;--i){
+						if(!targetnode->mRight[i] || *tmpend == targetnode->mRight[i]->mKey){ continue; } // not exist or too far
+ 						range_forward(i,
+									  targetnode->mRight[i]->mId,
+									  *targetnode->mRight[i]->mAddress,
+									  targetnode->mRight[i]->mKey,    *tmpend,
+									  1,
+									  0,
+									  settings.myip,
+									  settings.targetport,
+									  &origin_query,
+									  false);
+						tmpend = &targetnode->mRight[i]->mKey;
+					}
+					
+					targetnode = nextnode;
+					nextnode = gNodeList.get_next(*nextnode);
+					while(nextnode != NULL && ((nextnode->getKey() < *endkey) || (right_closed && nextnode->getKey() == *endkey)) ){
+						gRangeQueryList.found_noTag(origin_query,nextnode->getKey(),nextnode->getValue());
+						
+						const strkey* tmpend = &nextnode->getKey();
+						for(int i = MAXLEVEL-2;i>=0;--i){
+							if(!targetnode->mRight[i] || *tmpend == targetnode->mRight[i]->mKey){ continue; }
+							range_forward(i,
+										  targetnode->mRight[i]->mId,
+										  *targetnode->mRight[i]->mAddress,
+										  targetnode->mRight[i]->mKey,   *tmpend,
+										  1,
+										  0,
+										  settings.myip,
+										  settings.targetport,
+										  &origin_query,
+										  false);	
+							tmpend = &targetnode->mRight[i]->mKey;
+						}
+						targetnode = nextnode;
+						nextnode = gNodeList.get_next(*nextnode);
+					}
+					for(int i = MAXLEVEL-2;i>=0;--i){
+						const strkey* tmpend = endkey;
+						if(!targetnode->mRight[i] || *tmpend < targetnode->mRight[i]->mKey || (!(right_closed) && *endkey == targetnode->mRight[i]->mKey) ){ continue; }
+						
+						range_forward(i,
+									  targetnode->mRight[i]->mId,
+									  *targetnode->mRight[i]->mAddress,
+									  targetnode->mRight[i]->mKey,*endkey,
+									  1,
+									  right_closed,
+									  settings.myip,
+									  settings.targetport,
+									  &origin_query,
+									  false);
+						tmpend = &targetnode->mRight[i]->mKey; 
+					}
+				}else{
+					for(int i = MAXLEVEL-1;i>=0;--i){
+						if(!targetnode->mRight[i] || *endkey < targetnode->mRight[i]->mKey){ continue; }
+						range_forward(i,
+									  targetnode->mRight[i]->mId,
+									  *targetnode->mRight[i]->mAddress,
+									  targetnode->getKey(),*endkey,
+									  left_closed,
+									  right_closed,
+									  settings.myip,
+									  settings.targetport,
+									  &origin_query,
+									  false);	
+						break;
+					}
+				}
+				gRangeQueryList.notfound(origin_query);
+			}else if(*endkey < targetnode->getKey()){
+				DEBUG_OUT("rightside..\n");
+				for(int i = MAXLEVEL-1;i>=0;--i){
+					if(!targetnode->mLeft[i] || targetnode->mLeft[i]->mKey < *beginkey){ continue; }
+					range_forward(i,0,*targetnode->mLeft[i]->mAddress,*beginkey,*endkey,left_closed,right_closed,settings.myip,settings.targetport,&origin_query,false);
+					break;
+				}
+				gRangeQueryList.notfound(origin_query);
+			}else{// in the range
+				DEBUG_OUT("middle..\n");
+				if(*beginkey < targetnode->getKey() || targetnode->getKey() < *endkey || (left_closed && targetnode->getKey() == *beginkey) || (right_closed && targetnode->getKey() == *endkey)){
+					gRangeQueryList.found_noTag(origin_query,targetnode->getKey(),targetnode->getValue());
+				}
+				if(*beginkey < targetnode->getKey()){
+					for(int i = MAXLEVEL-2;i>=0;--i){
+						if(!targetnode->mLeft[i] || targetnode->mLeft[i]->mKey < *beginkey){ continue; }
+						range_forward(i,targetnode->mLeft[i]->mId,*targetnode->mLeft[i]->mAddress,*beginkey,targetnode->getKey(),left_closed,0,settings.myip,settings.targetport,&origin_query,false);
+						DEBUG_OUT("left send\n");
+						break;
+					}
+				}
+				nextnode = gNodeList.get_next(*targetnode);
+				if(nextnode != NULL && ((nextnode->getKey() < *endkey) || ((right_closed) && nextnode->getKey() == *endkey)) ){
+					
+					gRangeQueryList.found_noTag(origin_query,nextnode->getKey(),nextnode->getValue());
+					const strkey* tmpend = &nextnode->getKey();
+					for(int i = MAXLEVEL-2;i>=0;--i){
+						if(!targetnode->mRight[i] || *tmpend == targetnode->mRight[i]->mKey){ continue; } // not exist or too far
+ 						range_forward(i,
+									  targetnode->mRight[i]->mId,
+									  *targetnode->mRight[i]->mAddress,
+									  targetnode->mRight[i]->mKey,    *tmpend,
+									  1,
+									  0,
+									  settings.myip,
+									  settings.targetport,
+									  &origin_query,
+									  false);
+						tmpend = &targetnode->mRight[i]->mKey;
+					}
+					
+					targetnode = nextnode;
+					nextnode = gNodeList.get_next(*nextnode);
+					while(nextnode != NULL && ((nextnode->getKey() < *endkey) || (right_closed && nextnode->getKey() == *endkey)) ){
+						gRangeQueryList.found_noTag(origin_query,nextnode->getKey(),nextnode->getValue());
+						
+						const strkey* tmpend = &nextnode->getKey();
+						for(int i = MAXLEVEL-2;i>=0;--i){
+							if(!targetnode->mRight[i] || *tmpend == targetnode->mRight[i]->mKey){ continue; }
+							range_forward(i,
+										  targetnode->mRight[i]->mId,
+										  *targetnode->mRight[i]->mAddress,
+										  targetnode->mRight[i]->mKey,   *tmpend,
+										  1,
+										  0,
+										  settings.myip,
+										  settings.targetport,
+										  &origin_query,false);	
+							tmpend = &targetnode->mRight[i]->mKey;
+						}
+						targetnode = nextnode;
+						nextnode = gNodeList.get_next(*nextnode);
+					}
+					for(int i = MAXLEVEL-2;i>=0;--i){
+						const strkey* tmpend = endkey;
+						if(!targetnode->mRight[i] || *endkey < targetnode->mRight[i]->mKey || (!(right_closed) && *endkey == targetnode->mRight[i]->mKey) ){ continue; }
+						range_forward(i,
+									  targetnode->mRight[i]->mId,
+									  *targetnode->mRight[i]->mAddress,
+									  targetnode->mRight[i]->mKey,*tmpend,
+									  1,
+									  right_closed,
+									  settings.myip,
+									  settings.targetport,
+									  &origin_query,
+									  false);
+						tmpend = &targetnode->mRight[i]->mKey;
+
+					}
+				}else{
+					for(int i = MAXLEVEL-1;i>=0;--i){
+						if(!targetnode->mRight[i] || *endkey < targetnode->mRight[i]->mKey){ continue; }
+						range_forward(i,
+									  targetnode->mRight[i]->mId,
+									  *targetnode->mRight[i]->mAddress,
+									  targetnode->getKey(),*endkey,
+									  0,
+									  right_closed,
+									  settings.myip,
+									  settings.targetport,
+									  &origin_query,
+									  false);
+						break;
+					}
+				}
+				gRangeQueryList.notfound(origin_query);
 			}
-		}else if(*endkey < targetnode->getKey()){
-			for(int i = MAXLEVEL-1;i>=0;--i){
-				if(!targetnode->mLeft[i] || *beginkey < targetnode->mLeft[i]->mKey){ continue; }
-				range_forward(MAXLEVEL-1,0,*targetnode->mLeft[i]->mAddress,*beginkey,*endkey,(char)atoi(buf->tokens[RGET_LEFT_CLOSED].str),(char)atoi(buf->tokens[RGET_RIGHT_CLOSED].str),settings.myip,settings.targetport,&origin_query,true);
-				break;
-			}
-		}else{
-			add = gAddressList.find(settings.myip,settings.myport);
-			range_forward(MAXLEVEL-1,0,*add,*beginkey,*endkey,(char)atoi(buf->tokens[RGET_LEFT_CLOSED].str),(char)atoi(buf->tokens[RGET_RIGHT_CLOSED].str),settings.myip,settings.targetport,&origin_query,true);
 		}
 		
 		free(buff);
@@ -976,6 +1210,9 @@ int memcached_thread(const int socket){
 		break;
 	case memcache_buffer::state_close:
 		//fprintf(stderr,"close!!\n");
+		if(socket == 0 ){
+			break;
+		}
 		gMemcachedSockets.erase(socket);
 		//*
 		if(settings.verbose > 2)
@@ -991,6 +1228,7 @@ int memcached_thread(const int socket){
 		close(socket);
 		break;
 	}
+	
 	return DeleteFlag;
 }
 
@@ -1137,6 +1375,7 @@ int main(int argc,char** argv){
 	
 	threads = (pthread_t*)malloc((settings.threads-1)*sizeof(pthread_t));
 	while(1){
+		break;
 		DEBUG(break);
 		for(int i=0;i<settings.threads-1;i++){
 			pthread_create(&threads[i],NULL,worker,NULL);

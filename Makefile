@@ -6,10 +6,10 @@ WARNS = -Wextra -Wformat=2 -Wstrict-aliasing=2 -Wcast-qual -Wcast-align \
 
 target:skipgraph 
 
-skipgraph:skipgraph.o mytcplib.o mulio.o memcache_buffer.o  suspend.hpp
+skipgraph:skipgraph.o mytcplib.o mulio.o memcache_buffer.o suspend.hpp
 	g++44  skipgraph.o mytcplib.o mulio.o memcache_buffer.o -o skipgraph -pthread -lrt $(OPTS) $(WARNS)
 
-skipgraph.o:skipgraph.cpp skipgraph.h
+skipgraph.o:skipgraph.cpp skipgraph.h suspend.hpp
 	g++44 skipgraph.cpp -o skipgraph.o -c $(OPTS) $(WARNS)
 
 memcache_buffer.o:memcache_buffer.cpp memcache_buffer.h
@@ -21,7 +21,5 @@ mytcplib.o: mytcplib.cpp mytcplib.h
 mulio.o:mulio.cpp mulio.h
 	g++44 mulio.cpp -o mulio.o -c $(OPTS) $(WARNS)
 
-
-
-clean :
+clean :	
 	rm *.o

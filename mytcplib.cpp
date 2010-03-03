@@ -97,13 +97,16 @@ int deep_write(const int socket,const void* buff,int length){
 			length -= sendsize;
 		}else{
 			if(flag == 0){
-				fprintf(stderr,"socket:%d ",socket);
+				fprintf(stderr,"\nsocket:%d ",socket);
 				perror("deep_write");
 				flag=1;
 			}
 		}
 	}
-	return sendsize;
+	if(flag){
+		fprintf(stderr,"but %d byte was sent corrctly\n",sentbuf);
+	}
+	return sentbuf;
 }
 int deep_read(const int socket,void* buff,int length){
 	char* beginbuff = (char*)buff;
@@ -122,6 +125,9 @@ int deep_read(const int socket,void* buff,int length){
 				flag = 1;
 			}
 		}
+	}
+	if(flag){
+		fprintf(stderr," ...socket ok\n");
 	}
 	return recvbuf;
 }
@@ -179,8 +185,8 @@ void socket_maximize_rcvbuf(const int socket){
     }
 }
 void set_nodelay(const int socket){
-	return;
-	int result = setsockopt(socket, SOL_SOCKET, TCP_NODELAY, (void *)&OK, sizeof(OK));
+
+	int result = setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, (void *)&OK, sizeof(OK));
 	if(result < 0){
 		perror("set nodelay ");
 	}
@@ -204,6 +210,7 @@ void set_keepalive(const int socket){
 }
 
 void set_linger(const int socket){
+	return;
 	int result = setsockopt(socket, SOL_SOCKET, SO_LINGER, (void *)&OK, sizeof(OK));
 	if(result < 0){
 		perror("set linger ");
